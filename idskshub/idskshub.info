@@ -1,0 +1,14 @@
+;$Id$
+name = IDS KS Hub Manager
+description = Provides functionalities to manage the import and synchronisation of remote content into the IDS KS information systems.
+package = IDS
+core = 7.x
+version = 7.x-1.0-beta1
+
+configure = admin/config/services/idskshub
+
+files[] = idskshub.admin.inc
+files[] = idskshub.install
+files[] = idskshub.module
+
+stylesheets[all][] = css/idskshub.css

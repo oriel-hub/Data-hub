@@ -1,0 +1,333 @@
+/* IDS KS Importer */
+
+.view-ids-ks-literal .views-table {
+  border: 1px solid lightgrey;
+  border-collapse: separate;
+  margin-top: 20px;
+  margin-bottom: 30px;
+}
+
+.view-ids-ks-literal caption {
+  border: 1px solid grey;
+  border-bottom: 0px;
+  border-collapse: collapse;
+  background: lightgrey;
+}
+
+.view-ids-ks-literal caption a {
+  color: darkred;
+}
+
+.views-field-field-literal-source {
+  width: 20%;
+}
+
+.views-field-field-literal-value {
+  width: 70%;
+}
+
+.views-field-nothing {
+  width: 10%;
+}
+
+.view-ids-ks-items .views-table{
+  border: 1px solid grey;
+  border-collapse: separate;
+}
+
+.feed-icon {
+  display: none;
+}
+
+/* Recent updates in home page */
+
+.item-title-teaser {
+  font-weight: bold;
+}
+
+.item-description-teaser {
+  font-size: 13px;
+  margin-top: 8px;
+}
+
+.entity-ids-ks-item {
+  margin-bottom: 25px;
+  border: 1px solid lightgrey;
+  padding: 10px;
+}
+
+/*
+.field-name-field-item-type {
+  position: relative;
+  top: -20px;
+  float: right;
+  font-size: 13px;
+}
+*/
+
+.field-name-sources {
+  font-size: 13px;
+}
+
+.field-name-sources .field-label {
+  color: grey;
+  font-weight: normal;
+}
+
+.field-name-field-item-type {
+  font-size: 13px;
+}
+
+.field-name-field-item-type .field-label {
+  color: grey;
+  font-weight: normal;
+}
+
+/* IDS KS Hub admin pages */
+
+.entity .field {
+  padding: 10px;
+}
+
+.form-item .description {
+  font-style: italic;
+}
+
+.entity-ids-ks-source {
+  background: whitesmoke;
+  border: 1px solid lightgray;
+  padding: 10px;
+}
+
+.entity-ids-ks-contributor {
+  background: whitesmoke;
+  border: 1px solid lightgray;
+  padding: 10px;
+}
+
+.entity-ids-ks-mapping {
+  background: whitesmoke;
+  border: 1px solid lightgray;
+  padding: 10px;
+}
+
+.entity-ids-ks-type {
+  background: whitesmoke;
+  border: 1px solid lightgray;
+  padding: 10px;
+}
+
+#eck-entity-form-add-ids-ks-contributor-ids-ks-contributor {
+  background: whitesmoke;
+  border: 1px solid lightgray;
+  padding: 10px;
+}
+
+#eck-entity-form-add-ids-ks-source-ids-ks-source {
+  background: whitesmoke;
+  border: 1px solid lightgray;
+  padding: 10px;
+}
+
+#idskshub-newmapping-form {
+  background: whitesmoke;
+  border: 1px solid lightgray;
+  padding: 10px;
+}
+
+#eck-entity-form-add-ids-ks-type-ids-ks-type {
+  background: whitesmoke;
+  border: 1px solid lightgray;
+  padding: 10px;
+}
+
+#eck-entity-form-edit-ids-ks-contributor-ids-ks-contributor {
+  background: whitesmoke;
+  border: 1px solid lightgray;
+  padding: 10px;
+}
+
+#eck-entity-form-edit-ids-ks-source-ids-ks-source {
+  background: whitesmoke;
+  border: 1px solid lightgray;
+  padding: 10px;
+}
+
+#eck-entity-form-edit-ids-ks-mapping-ids-ks-mapping {
+  background: whitesmoke;
+  border: 1px solid lightgray;
+  padding: 10px;
+}
+
+#eck-entity-form-edit-ids-ks-type-ids-ks-type {
+  background: whitesmoke;
+  border: 1px solid lightgray;
+  padding: 10px;
+}
+
+.field-add-more-submit {
+  float: right;
+}
+
+.field-multiple-table th label {
+  padding: 3px;
+}
+
+.field-multiple-table td {
+  padding: 7px;
+}
+
+.field-widget-entityreference-view-widget .tabledrag-toggle-weight-wrapper {
+  display: none;
+}
+
+.field-type-list-boolean label.option {
+  font-weight: bold;
+}
+
+.ds-2col-stacked .group-left .form-item {
+  width: 95%;
+}
+
+.ds-2col-stacked .group-right .form-item {
+  width: 95%;
+}
+
+.ds-2col-stacked-fluid .group-left .form-wrapper {
+  width: 95%;
+}
+
+.ds-2col-stacked-fluid .group-right .form-wrapper {
+  width: 95%;
+}
+
+.entity .field-name-display-path-destination {
+  padding: 0px;
+}
+
+.entity .field-name-display-path-origin {
+  padding: 0px;
+}
+
+.entity .field-name-field-item-type {
+  padding-top: 3px;
+  padding-bottom: 3px;
+}
+
+.entity .field-name-sources {
+  padding-top: 3px;
+  padding-bottom: 3px;
+}
+
+.oriel-search-result {
+  margin-bottom: 25px;
+}
+
+.block-facetapi {
+  float: right;
+  margin-right: 50px;
+  position: relative;
+  top: 25px;
+}
+
+.view-search-view .view-filters {
+  padding: 20px;
+  border: 1px solid lightgrey;
+}
+
+#edit-search-query {
+  border: 1px solid #ccc;
+}
+
+.front #footer {
+  border-top: none;
+}
+
+.view-ids-ks-items h2 {
+  margin: 0px;
+}
+
+/* Content mappings form */
+
+.form-content-mappings-left {
+  width: 48%;
+  float: left;
+}
+
+.form-content-mappings-right {
+  width: 48%;
+  float: right;
+}
+
+.fields-content-mappings-left {
+  width: 25%;
+  float: left;
+}
+
+.fields-content-mappings-right {
+  float: right;
+}
+
+.combine-items-cancel-button {
+  position: relative;
+  top: -47px;
+  height: 18px;
+  left: 65px;
+  width: 45px;
+  padding: 10px;
+}
+
+.merged-items-button {
+  position: relative;
+  top: -160px;
+  left: 775px;
+}
+
+.mapped-items-button {
+  position: relative;
+  top: -80px;
+  left: 15px;
+}
+
+.link-right {
+  float: right;
+  font-size: small;
+}
+
+.vbo-fieldset-select-all {
+  display: none;
+}
+
+.editable-literals-original-path input {
+  width: 200px;
+}
+
+.editable-literals-description textarea {
+  height: 350px;
+}
+
+.edit-item-literal .views-row-edit-static {
+  display: none;
+}
+
+.view-display-id-block_item_editable_header .views-row-edit-static {
+  display: none;
+}
+
+.item-editable-header-display-title input {
+  width: 600px;
+}
+
+.view-display-id-block_item_editable_header .form-submit {
+  float: right;
+  position: relative;
+  top: -30px;
+  width: 80px;
+}
+
+.view-display-id-block_item_literals_editable .form-submit {
+  float: right;
+  position: relative;
+  top: -30px;
+  width: 80px;
+}

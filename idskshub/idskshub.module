@@ -1,0 +1,957 @@
+<?php
+// $Id$
+
+/**
+ * @file
+ *  IDS KS Hub Module.
+ *
+ * This module implements a system to manage the import and synchronisation of remote
+ * content into the IDS KS information systems (http://www.ids.ac.uk/knowledge-services).
+ */
+
+require_once('idskshub.settings.inc');
+require_once('idskshub.classes.inc');
+require_once('idskshub.interface.inc');
+require_once('idskshub.fetcher.inc');
+require_once('idskshub.parser.inc');
+require_once('idskshub.processor.inc');
+require_once('idskshub.solr.inc');
+require_once('idskshub.semantic.inc');
+require_once('idskshub.callback.inc');
+
+function idskshub_hook_info_alter(&$hooks) {
+  $hooks['form_alter']['group'] = 'form';
+}
+
+function idskshub_get_formats_codes() {
+  $array_formats = array();
+  $f = new IdsKsFormat();
+  $formats = $f->getObjectsByProperties();
+  foreach ($formats as $format) {
+    $array_formats[$format->code] = $format->name;
+  }
+  asort($array_formats);
+  return $array_formats;    
+}
+
+function idskshub_get_types_names() {
+  $array_types = array();
+  $t = new IdsKsType();
+  $types = $t->getObjectsByProperties();
+  foreach ($types as $type) {
+    if ($type->name !== IDSKS_GENERIC_TYPE_NAME) {
+      $array_types[$type->name] = $type->name;
+    }
+  }
+  asort($array_types);
+  return $array_types;    
+}
+
+function idskshub_get_types_ids() {
+  $array_types = array();
+  $t = new IdsKsType();
+  $types = $t->getObjectsByProperties();
+  foreach ($types as $type) {
+    $array_types[$type->getId()] = $type->name;
+  }
+  asort($array_types);
+  return $array_types;    
+}
+
+function idskshub_get_sources_codes() {
+  $array_sources = array();
+  $s = new IdsKsSource();
+  $sources = $s->getObjectsByProperties();
+  foreach ($sources as $source) {
+    $array_sources[$source->code] = $source->name;
+  }
+  asort($array_sources);
+  return $array_sources;    
+}
+
+function idskshub_get_relationship_ids() {
+  $array_relationships = array();
+  $r = new IdsKsRelationship();
+  $relationships = $r->getObjectsByProperties();
+  foreach ($relationships as $relationship) {
+    $array_relationships[$relationship->getId()] = $relationship->type . ' - ' . $relationship->item_type->name;
+  }
+  asort($array_relationships);
+  return $array_relationships;    
+}
+
+function idskshub_get_item_sources($item_id) {
+  $item = new IdsKsItem();
+  $item->load($item_id);
+  $sources = $item->getSourcesFromValues();
+  $array_sources = array();
+  foreach ($sources as $source) {
+    $array_sources[$source->getId()] = $source->name;
+  }
+  return $array_sources;
+}
+
+function idskshub_hub_source() {
+  $source = new IdsKsSource();
+  if (!defined('IDSKS_HUB_SOURCE_CODE')) {
+    drupal_set_message(t('IDSKS_HUB_SOURCE_CODE not defined. Code "hub" assumed.'), 'warning');
+  }
+  $source->code = 'hub';
+  $source->load();
+  if (!($source->isSaved())) {
+    if (!defined('IDSKS_HUB_SOURCE_CODE')) {
+      drupal_set_message(t('IDSKS_HUB_SOURCE_NAME not defined. Name "OKHub" assumed.'), 'warning');
+    }
+    $source->name = 'OKHub';
+    $source->save();
+  }
+  return $source;
+}
+
+function idskshub_get_xml_values($xml_item, $item_path, $root_path='') {
+  $path_xml = '';
+  if ($root_path) {
+    $path_xml = '//' . idskshub_change_namespace($root_path) . '/';
+  }
+  $path_xml .= idskshub_change_namespace($item_path);
+  $xml_values = $xml_item->xpath($path_xml);
+  return $xml_values;
+}
+
+function idskshub_get_semantic_services() {
+  $semantic_services = idskshub_semantic_services_definitions();
+  $show_services = array();
+  foreach ($semantic_services as $code => $name) {
+    $source_semantic = new IdsKsSource();
+    $source_semantic->code = $code;
+    $source_semantic->load();
+    if (!($source_semantic->getId())) { // If it doesn't exist, we created it.
+      if (preg_match('/^[a-z]+$/', $code)) {
+        $source_semantic->name = $name;
+        $source_semantic->is_semantic = 1;
+        $source_semantic->save();
+        $show_services[$code] = $name;
+      }
+      else {
+        drupal_set_message(t('@code is not a valid source code. Please check the semantic services definitions', array('@name' => $name)), 'warning');
+      }
+    }
+    else {
+      if (empty($source_semantic->is_semantic)) {
+        drupal_set_message(t('The source with code @code exists but it is not an external semantic augmentation service.', array('@code' => $code)), 'warning');        
+      }
+      else {
+        $show_services[$code] = $name;
+      }
+    }
+  }
+  return $semantic_services;
+}
+
+function idskshub_index_selected($items_ids, $page_batch='') {
+  if (!empty($items_ids)) {
+    if ($index_hub = search_api_index_load(IDSKS_SOLR_INDEX)) {
+      $num = count($items_ids);
+      $items = ($num > 1) ? 'items' : 'item';
+      $batch = array(
+        'operations' => array(
+          array('search_api_index_specific_items', array($index_hub, $items_ids)),
+        ),  
+        'title' => t("Indexing @num @items", array('@num' => $num, '@items' => $items)),
+        'error_message' => t('Error indexing. Please check the logs.'),
+      );
+      batch_set($batch);
+      batch_process($page_batch);
+    }
+    else {
+      drupal_set_message(t('The index could not be loaded.'), 'status'); 
+    }
+  }
+  else {
+    drupal_set_message(t('No items were selected.'), 'status'); 
+  }
+}
+
+function idskshub_delete_items_page($page_arguments) {
+  $items = explode(',', $page_arguments);
+  echo '<ul>';
+    foreach ($items as $item) {
+      if (is_numeric($item)) {
+        if (IdsKsItem::deleteItem($item, TRUE, TRUE)) {
+          echo "<li> Deleted item $item\n";
+        }
+        else {
+          echo "<li> The item $item does not exist.\n";
+        }
+      }
+    }
+  echo '</ul>';
+}
+
+function idskshub_delete_literals_page($page_arguments) {
+  $literals = explode(',', $page_arguments);
+  echo '<ul>';
+    foreach ($literals as $literal) {
+      if (is_numeric($literal)) {
+        if (IdsKsLiteral::deleteLiteral($literal, TRUE)) {
+          echo "<li> Deleted literal $literal\n";
+        }
+        else {
+          echo "<li> The literal $literal does not exist.\n";
+        }
+      }
+    }
+  echo '</ul>';
+}
+
+function idskshub_touch_by_sources($sources_ids) {
+  $changes_ids = IdsKsTrackChanges::getParentsIds(array('source' => $sources_ids));
+  $items_ids = IdsKsItem::getParentsIds(array('track_changes' => $changes_ids));
+  IdsKsItem::markToIndex($items_ids);
+}
+
+function idskshub_index_by_sources($sources_ids) {
+  $changes_ids = IdsKsTrackChanges::getParentsIds(array('source' => $sources_ids));
+  $items_ids = IdsKsItem::getParentsIds(array('track_changes' => $changes_ids));
+  idskshub_index_selected($items_ids, 'sources');
+}
+
+// Implementation of hook_entity_info_alter. 
+function idskshub_entity_info_alter(&$entity_info) {
+  $entity_info['ids_ks_attribute']['label callback'] = 'idskshub_entity_label';
+  $entity_info['ids_ks_contributor']['label callback'] = 'idskshub_entity_label';
+  $entity_info['ids_ks_feed']['label callback'] = 'idskshub_entity_label';
+  $entity_info['ids_ks_format']['label callback'] = 'idskshub_entity_label';
+  $entity_info['ids_ks_item']['label callback'] = 'idskshub_entity_label';
+  $entity_info['ids_ks_literal']['label callback'] = 'idskshub_entity_label';
+  $entity_info['ids_ks_mapping']['label callback'] = 'idskshub_entity_label';
+  $entity_info['ids_ks_related_item']['label callback'] = 'idskshub_entity_label';
+  $entity_info['ids_ks_relationship']['label callback'] = 'idskshub_entity_label';
+  $entity_info['ids_ks_source']['label callback'] = 'idskshub_entity_label';
+  $entity_info['ids_ks_track_changes']['label callback'] = 'idskshub_entity_label';
+  $entity_info['ids_ks_translation']['label callback'] = 'idskshub_entity_label';
+  $entity_info['ids_ks_type']['label callback'] = 'idskshub_entity_label';
+  $entity_info['ids_ks_versions_literal']['label callback'] = 'idskshub_entity_label';
+}
+
+// Returns the value of the label to display by default for each of our entity types.
+function idskshub_entity_label($entity, $entity_type) {
+  $label = '';
+  $wrapper = entity_metadata_wrapper($entity_type, $entity);
+  switch ($entity_type) {
+    case 'ids_ks_attribute':
+      if (isset($wrapper->{'field_attribute_name'}) && isset($wrapper->{'field_attribute_value'})) {
+        $label = $wrapper->{'field_attribute_name'}->value() . ' = ' . $wrapper->{'field_attribute_value'}->value();
+      }
+      break;
+    case 'ids_ks_contributor':
+      if ($wrapper->{'field_contributor_name'}->value()) {
+        $label = $wrapper->{'field_contributor_name'}->value();
+      }
+      if ($wrapper->{'field_contributor_acronym'}->value()) {
+        $label .= ' (' . $wrapper->{'field_contributor_acronym'}->value() . ')';
+      }
+      break;
+    case 'ids_ks_feed':
+      if ($wrapper->{'field_feed_name'}->value()) {
+        $label = $wrapper->{'field_feed_name'}->value();
+      }
+      break;
+    case 'ids_ks_format':
+      if ($wrapper->{'field_format_name'}->value()) {
+        $label = $wrapper->{'field_format_name'}->value();
+      }
+      break;
+    case 'ids_ks_item':
+      if (isset($wrapper->{'field_item_type'}) && isset($wrapper->{'field_item_type'}->{'field_type_name'}) && $wrapper->{'field_item_type'}->{'field_type_name'}->value()) {
+        $label = $wrapper->{'field_item_type'}->{'field_type_name'}->value();
+      }
+      if (isset($wrapper->{'field_item_display_title'}) && $wrapper->{'field_item_display_title'}->value()) {
+        $title = $wrapper->{'field_item_display_title'}->value();
+        $label .= ': ' . $title;
+      }
+      else {
+        $label .= ' ' . $entity->identifier();
+      }
+      break;
+    case 'ids_ks_literal':
+      if (isset($wrapper->{'field_literal_source'}) && $wrapper->{'field_literal_source'}->value()) {
+        $label = idskshub_entity_label($wrapper->{'field_literal_source'}->value(), 'ids_ks_source') . ': ';
+      }
+      if (isset($wrapper->{'field_literal_original_path'})) {
+        $label .= $wrapper->{'field_literal_original_path'}->value();
+      }
+      if (isset($wrapper->{'field_literal_value'}) && $wrapper->{'field_literal_value'}->value()) {
+        $label .= ' = ' . $wrapper->{'field_literal_value'}->value();
+      }
+      if (isset($wrapper->{'field_literal_attributes'}) && $wrapper->{'field_literal_attributes'}->value()) {
+        foreach ($wrapper->{'field_literal_attributes'}->value() as $attribute) {
+          $attributes[] = idskshub_entity_label($attribute, 'ids_ks_attribute');
+        }
+        $label .= ' ' . implode(',', $attributes);
+      }
+      break;
+    case 'ids_ks_mapping':
+      $label = idskshub_print_mapping_entity($entity);
+      break;
+    case 'ids_ks_related_item':
+      if (isset($wrapper->{'field_related_item_source'}) && $wrapper->{'field_related_item_source'}->value()) {
+        $label = idskshub_entity_label($wrapper->{'field_related_item_source'}->value(), 'ids_ks_source');
+      }
+      if (isset($wrapper->{'field_related_item_relationship'}) && $wrapper->{'field_related_item_relationship'}->value()) {
+        $label .=  ': ' . idskshub_entity_label($wrapper->{'field_related_item_relationship'}->value(), 'ids_ks_relationship');
+      }
+      if (isset($wrapper->{'field_related_item_referred_item'}) && $wrapper->{'field_related_item_referred_item'}->value()) {
+        $label .=  ' -> ' . idskshub_entity_label($wrapper->{'field_related_item_referred_item'}->value(), 'ids_ks_item');
+      }
+      break;
+    case 'ids_ks_relationship':
+      if (isset($wrapper->{'field_relationship_type'}) && $wrapper->{'field_relationship_type'}->value()) {
+        $label .= $wrapper->{'field_relationship_type'}->value();
+      }
+/*
+      if (isset($wrapper->{'field_relationship_item_type'}) && $wrapper->{'field_relationship_item_type'}->value()) {
+        $label .= ' - ' . idskshub_entity_label($wrapper->{'field_relationship_item_type'}->value(), 'ids_ks_type');
+      }
+*/
+      break;
+    case 'ids_ks_source':
+      if ($wrapper->{'field_source_name'}->value()) {
+        $label = $wrapper->{'field_source_name'}->value();
+      }
+      break;
+    case 'ids_ks_track_changes':
+      if (isset($wrapper->{'field_track_changes_timestamp'})) {
+        $label = date("Y-m-d\Th:i:s\Z", $wrapper->{'field_track_changes_timestamp'}->value());
+      }
+      if (isset($wrapper->{'field_track_changes_source'})) {
+        $label = $wrapper->{'field_track_changes_source'}->{'field_source_name'}->value() . ':' . $label;
+      }
+      break;
+    case 'ids_ks_type':
+      if ($wrapper->{'field_type_name'}->value()) {
+        $label = $wrapper->{'field_type_name'}->value();
+      }
+      break;
+    case 'ids_ks_versions_literal':
+      if (isset($wrapper->{'field_versions_literal_path'})) {
+        $label .= $wrapper->{'field_versions_literal_path'}->value();
+      }
+      if (isset($wrapper->{'field_versions_literal_literals'})) {
+        $literals = array();
+        foreach ($wrapper->{'field_versions_literal_literals'}->value() as $literal) {
+          $literals[] = idskshub_entity_label($literal, 'ids_ks_literal');
+        }
+        $label .= ' [' . implode('; ', $literals) . ']';
+      }
+      break;
+  }
+  if (!$label) {
+    if (!empty($entity)) {
+      $label = $entity->identifier();
+    }
+  }
+  return $label;
+}
+
+// Process delete entities when clicked directly on the delete link.
+function idskshub_delete_entity_form($form, &$form_state) {
+  $entity = $form_state['values']['entity'];
+  $redirect = '/';
+  if (isset($entity->type) && isset($entity->id)) {
+    switch ($entity->type) {
+      case 'ids_ks_item':
+        $redirect = 'delete-items/' . $entity->id;
+        break;
+      case 'ids_ks_literal':
+        $redirect = 'delete-literals/' . $entity->id;
+        break;
+      case 'ids_ks_mapping':
+        entity_delete('ids_ks_mapping', $entity->id);
+        drupal_set_message(t('Mapping deleted.'), 'status'); 
+        $redirect = 'mappings';
+        break;
+      case 'ids_ks_feed':
+        entity_delete('ids_ks_feed', $entity->id);
+        drupal_set_message(t('Feed deleted.'), 'status'); 
+        $redirect = 'feeds';
+        break;
+      case 'ids_ks_related_item':
+        entity_delete('ids_ks_related_item', $entity->id);
+        drupal_set_message(t('Related item deleted.'), 'status'); 
+        break;
+      case 'ids_ks_source':
+        $redirect = 'sources';
+        $used = IdsKsFeed::getParentsIds(array('source' => $entity->id)) || IdsKsMapping::getParentsIds(array('source' => $entity->id)) || IdsKsLiteral::getParentsIds(array('source' => $entity->id)) || IdsKsTrackChanges::getParentsIds(array('source' => $entity->id));
+        if (!$used) {
+          entity_delete('ids_ks_source', $entity->id);
+          drupal_set_message(t('Source deleted.'), 'status'); 
+        }
+        else {
+          drupal_set_message(t('The source @id <a href="@usedbyurl">is currently being used</a> and cannot be deleted.', array('@id' => $entity->id, '@usedbyurl' => '/used-by/source/' . $entity->id)), 'warning');
+        }
+        break;
+      case 'ids_ks_type':
+        $redirect = 'types';
+        $used = IdsKsItem::getParentsIds(array('type' => $entity->id)) || IdsKsFeed::getParentsIds(array('default_type' => $entity->id));
+        if (!$used) {
+          entity_delete('ids_ks_type', $entity->id);
+          drupal_set_message(t('Type deleted.'), 'status'); 
+        }
+        else {
+          drupal_set_message(t('The type @id <a href="@usedbyurl">is currently being used</a> and cannot be deleted.', array('@id' => $entity->id, '@usedbyurl' => '/used-by/type/' . $entity->id)), 'warning');
+        }
+        break;
+      case 'ids_ks_format':
+        $redirect = 'formats';
+        $used = IdsKsMapping::getParentsIds(array('format' => $entity->id)) || IdsKsFeed::getParentsIds(array('default_format' => $entity->id));
+        if (!$used) {
+          entity_delete('ids_ks_format', $entity->id);
+          drupal_set_message(t('Format deleted.'), 'status'); 
+        }
+        else {
+          drupal_set_message(t('The input format @id <a href="@usedbyurl">is currently being used</a> and cannot be deleted.', array('@id' => $entity->id, '@usedbyurl' => '/used-by/format/' . $entity->id)), 'warning');
+        }
+        break;
+      default:
+        drupal_set_message(t('Entities of type @type cannot be deleted directly.', array('@type' => $entity->type)), 'warning'); 
+    }
+  }
+  $form_state['redirect'] = $redirect;
+}
+
+// Possibly for the future. Now using ECK´s access check to manage our entities.
+function idskshub_permission() {
+	return array(
+		'manage idsks' => array(
+			'title' => t('Manage IDS KS Hub content'),
+			'description' => t('Manage fields, sources and content of the IDS KS data hub.'),
+		),
+	);
+}
+
+// Periodic imports
+
+function idskshub_cron() {
+  $queue['idskshub_update_solr_schema'] = DrupalQueue::get('idskshub_update_solr_schema');
+  $queue['idskshub_update_solr_schema']->createItem(NULL);
+  $queue['idskshub_notifications'] = DrupalQueue::get('idskshub_notifications');
+  $queue['idskshub_notifications']->createItem(NULL);
+  $queue['idskshub_import_feeds'] = DrupalQueue::get('idskshub_import_feeds');
+  $queue['idskshub_import_feeds']->createItem(NULL);
+}
+
+function idskshub_cron_queue_info() {
+  // Update Solr schema.
+  $queues['idskshub_update_solr_schema'] = array(
+    'worker callback' => 'idskshub_update_solr_schema',
+    'time' => 1200,
+  );
+  // Send notifications.
+  $queues['idskshub_notifications'] = array(
+    'worker callback' => 'idskshub_notifications',
+    'time' => 1200,
+  );
+  // Import feeds.
+  $queues['idskshub_import_feeds'] = array(
+    'worker callback' => 'idskshub_import_feeds',
+    'time' => 21600,
+  );
+  return $queues;
+}
+
+function idskshub_update_solr_schema() {
+  if ($schema = idskshub_solr_schema_definitions()) {
+    idskshub_set('hub_solr_schema', $schema);
+  }
+}
+
+function idskshub_import_feeds() {
+  $feeds_ids = IdsKsFeed::getIds();
+  foreach ($feeds_ids as $feed_id) {
+    $latest_import_feed = idskshub_get('latest_import_feed_' . $feed_id);
+    $feed = new IdsKsFeed;
+    $feed->load($feed_id);
+    if ($feed->isSaved()) {
+      if ($feed->periodicity && (empty($feed->weekday) || in_array(date('l'), $feed->weekday)) && (!$latest_import_feed || ($latest_import_feed + $feed->periodicity * 86400 < time()))) {
+        idskshub_set('latest_import_feed_' . $feed_id, time());
+        idskshub_import_feed($feed_id);
+        break; // Run one at a time. Continue with the next one in the next cron run.
+      }
+    }
+  }
+}
+
+function idskshub_import_feed($feed_id, $import_mode='background') {
+  $source_name = end(end(IdsKsSource::getFieldValues('name', IdsKsFeed::getChildrenIds($feed_id, 'source'))));
+  $type_name = end(end(IdsKsType::getFieldValues('name', IdsKsFeed::getChildrenIds($feed_id, 'default_type'))));
+  trigger_error(t('Importing from feed with id @feed (@source @type). @definition', array('@feed' => $feed_id, '@source' => $source_name, '@type' => $type_name, '@definition' => url("ids_ks_feed/ids_ks_feed/$feed_id", array('absolute'=>TRUE)))));
+  //$semantic = idskshub_semantic_services_definitions(); TODO: Call the semantic services from cron job for the new items.
+  $semantic = array();
+  IdsKsFetcher::fetchFile(0, '', 0, $feed_id, '', 'feed', $import_mode, $semantic, 'update_existing', 'incremental', 'replace', array('index' => 0), array('force' => 0));
+}
+
+// Implement hook_entity_insert().
+function idskshub_entity_insert($entity, $entity_type) {
+  switch ($entity_type) {
+    case 'ids_ks_item':
+      idskshub_record_notifications('items_created', $entity->identifier());
+      break;
+  }
+}
+
+// Implement idskshub_entity_update().
+function idskshub_entity_update($entity, $entity_type) {
+  switch ($entity_type) {
+    case 'ids_ks_item':
+      idskshub_record_notifications('items_updated', $entity->identifier());
+      break;
+  }
+}
+
+// Implement idskshub_entity_delete().
+function idskshub_entity_delete($entity, $entity_type) {
+  switch ($entity_type) {
+    case 'ids_ks_item':
+      idskshub_record_notifications('items_deleted', $entity->identifier());
+      break;
+  }
+}
+
+// Apply mappings. TODO: Extend for mappings with actions and no destination path. Consider wildcards.
+function idskshub_apply_mappings($mappings_ids) {
+  $new_mappings = explode(',', $mappings_ids);
+  $mappings_applied = array();
+  if (!empty($new_mappings)) {
+    foreach ($new_mappings as $mapping_id) {
+      $mapping = new IdsKsMapping();
+      $mapping->load($mapping_id);
+      if ($mapping->isSaved() && $mapping->path_origin && $mapping->path_destination && !($mapping->action || $mapping->relationship)) {
+        $mappings_applied[] = $mapping->getLabel();
+        $literals_original_path = IdsKsLiteral::getIds(array('original_path' => $mapping->path_origin));
+        //$versions_origin_ids = IdsKsVersionsLiteral::getIds(array('path' => $mapping->path_origin));
+        $versions_origin_ids = IdsKsVersionsLiteral::getParentsIds(array('literals' => $literals_original_path));
+        $versions_destination_ids = IdsKsVersionsLiteral::getIds(array('path' => $mapping->path_destination));
+        if (!empty($versions_origin_ids)) {
+          foreach ($versions_origin_ids as $versions_origin_id) {
+            //$versions_destination_id = 0;
+            $versions_origin = new IdsKsVersionsLiteral();
+            $versions_origin->load($versions_origin_id);
+            $literals_destination = array();
+            // we can't just change the path because there might be some literals that shouldn't be moved (because the attributes don't match, for instance).
+            foreach ($versions_origin->literals as $literal_origin) {
+              // If the source and path match.
+              if (isset($literal_origin) && ($literal_origin->original_path == $mapping->path_origin) && (empty($mapping->source) || ($mapping->source == $literal_origin->source))) {
+                // we check if the attributes match.
+                $included_attrs_literal = ((empty($literal_origin->attributes) && empty($mapping->attributes_origin)) || !(array_udiff($mapping->attributes_origin, $literal_origin->attributes, 'idskshub_diff')));
+                if ($included_attrs_literal) {
+                  $literals_destination[$literal_origin->getId()] = $literal_origin;
+                }
+              }
+            }
+            // we see if there is already a versions literal with the new path in the item to which this versions literal belongs.
+            if (!empty($literals_destination) && ($items_ids = IdsKsItem::getParentsIds(array('versions_literals' => $versions_origin_id)))) {
+              $item_id = end($items_ids); // Each versions is only one item.
+              // if the 'mapped' versions literal is already in the item, we update it with the literals in the "old" versions literal.
+              $versions_literals_item = IdsKsItem::getChildrenIds($item_id, 'versions_literals');
+              if ($versions_mapped_item_ids = array_intersect($versions_destination_ids, $versions_literals_item)) { // The mapped path exists in the item.
+                $versions_destination_id = end($versions_mapped_item_ids); // There should be only one versions literal for each mapped path in an item.
+                $versions_destination = new IdsKsVersionsLiteral();
+                $versions_destination->load($versions_destination_id);
+                foreach ($literals_destination as $literal) { // Copy the literals to the existing versions.
+                  if (!($versions_destination->inLiterals($literal))) {
+                    $versions_destination->literals[] = $literal;
+                  }
+                }
+                $versions_destination->save();
+                if (count($versions_origin->literals) == count($literals_destination)) { // If all the literals are copied. There is no need to keep the old one.
+                  $versions_origin->delete(TRUE, FALSE); // We don't delete its literals, as they were moved.
+                }
+                else {
+                  // Some literals were not moved. We have to keep both versions, removing the ones to move from their old place.
+                  $versions_origin->deleteLiteralsByIds(array_keys($literals_destination), FALSE);
+                  $versions_origin->save();
+                }
+              }
+              else { // There are no literals with the mapped path.
+                if (count($versions_origin->literals) == count($literals_destination)) {  // All the literals have to be moved.
+                  $versions_origin->path = $mapping->path_destination; // We can just change the path of the existing versions.
+                  $versions_origin->save();
+                }
+                else {
+                  // We have to keep the old one (removing the copied literals). $versions_destination is new.
+                  $versions_origin->deleteLiteralsByIds(array_keys($literals_destination), FALSE);
+                  $versions_origin->save();
+                  $versions_destination = new IdsKsVersionsLiteral();
+                  $versions_destination->literals = array_values($literals_destination); // Remove NULLs.
+                  $versions_destination->path = $mapping->path_destination;
+                  $versions_destination->save();
+                  $item = new IdsKsItem();
+                  $item->load($item_id);
+                  $item->versions_literals[] = $versions_destination; // Add new versions to the item.
+                  $item->save();
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  return $mappings_applied;
+}
+
+function idskshub_items_by_source($items_ids) {
+  $items_source = array();
+  foreach($items_ids as $item_id) {
+    $track_changes_ids = IdsKsItem::getChildrenIds($item_id, 'track_changes');
+    foreach($track_changes_ids as $change_id) {
+      if ($sources_ids = IdsKsTrackChanges::getFieldValues('source', array($change_id))) {
+        $source_id = end(end($sources_ids));
+        $items_source[$source_id][] = $item_id;
+      }
+    }
+  }
+  return $items_source;
+}
+
+function idskshub_items_by_type($items_ids) {
+  $items_type = array();
+  foreach($items_ids as $item_id) {
+    if ($types_ids = IdsKsItem::getFieldValues('type', array($item_id))) {
+      $type_id = end(end($types_ids));
+      $items_type[$type_id][] = $item_id;
+    }
+  }
+  return $items_type;
+}
+
+/* Record and send notifications */
+
+function idskshub_record_notifications($type_action, $item_id) {
+    $recorded = idskshub_get($type_action);
+    $recorded[$item_id] = time();
+    idskshub_set($type_action, $recorded);
+}
+
+function idskshub_notifications() {
+  $actions = array('created', 'updated', 'deleted');
+  foreach ($actions as $action) {
+    $type_action = 'items_' . $action;
+    $items = idskshub_get($type_action);
+    idskshub_send_notifications($type_action, $items);
+    idskshub_set($type_action, array());
+  }
+}
+
+function idskshub_send_notifications($operation, $items_notify) {
+  $notifications = idskshub_get('notify_items');
+  $sources = idskshub_sources_options();
+  $types = idskshub_get_types_ids();
+  $items_notify_ids = array_keys($items_notify);
+  $items_source = idskshub_items_by_source($items_notify_ids);
+  $items_type = idskshub_items_by_type($items_notify_ids);
+  foreach ($notifications as $notification)  {
+    $items_ids = array();
+    $sources_names = array();
+    $types_names = array();
+    $items_source_ids = array();
+    $items_type_ids = array();
+    $rids = $notification['roles'];
+    $uids_roles = db_select('users_roles', 'ur')
+            ->fields('ur', array('uid'))
+            ->condition('rid', $rids, 'IN')
+            ->execute()
+            ->fetchCol('uid');
+    $uids = array_merge($notification['users'], $uids_roles);
+    if ($notification['sources'] == array('0')) {
+      $sources_ids = array_keys($sources);
+    }
+    else {
+      $sources_ids = $notification['sources'];
+    }
+    foreach ($sources_ids as $source_id) {
+      if ($source_id && isset($items_source[$source_id])) {
+        $items_source_ids = array_merge($items_source_ids, $items_source[$source_id]);
+        $sources_names[] = $sources[$source_id];
+      }      
+    }
+    if ($notification['types'] == array('0')) {
+      $types_ids = array_keys($types);
+    }
+    else {
+      $types_ids = $notification['types'];
+    }
+    foreach ($types_ids as $type_id) {
+      if ($type_id && isset($items_type[$type_id])) {
+        $items_type_ids = array_merge($items_type_ids, $items_type[$type_id]);
+        $types_names[] = $types[$type_id];
+      }
+    }
+    $items_ids = array_unique(array_intersect($items_source_ids, $items_type_ids));
+    $filters = array('sources' => implode(', ', $sources_names), 'types' => implode(', ', $types_names));
+    $email_message = idskshub_generate_email($operation, $items_notify, $items_ids, $types, $sources, $filters);
+    trigger_error($email_message);
+    idskshub_send_notifications_emails($operation, $uids, $email_message, $filters);
+  }
+}
+
+function idskshub_generate_email($operation, $items_notify, $items_ids, $types, $sources, $filters) {
+  $action = ltrim($operation, 'items_');
+  $message = t('*** OKHub Notifications ***') . "\n\n";
+
+  $message .= t('To change/add notifications please go to http://data.okhub.org/notifications.') . "\n\n";
+
+/*
+  $message .= t('Items that match the following conditions:') . "\n";
+  if ($filters['sources']) {
+    $message .= '    - ' . t('Sources:') . $filters['sources'] . "\n";
+  }
+  else {
+    $message .= '    - ' . t('All sources') . "\n";
+  }  
+  if ($filters['types']) {
+    $message .= '    - ' . t('Types:') . $filters['types'] . "\n\n";
+  }
+  else {
+    $message .= '    - ' . t('All types') . "\n\n";
+  }
+*/
+  $message .= t('*** Summary ***') . "\n\n";
+  if (!count($items_ids)) {
+    $message .= t('No items were ') .  t('@operation', array('@operation' => $action)) . ".\n\n";
+  }
+  else {
+    $message .= count($items_ids) . t(' items were ') .  t('@operation', array('@operation' => $action)) . ".\n\n";
+
+    $message .= t('*** Detail ***') . "\n\n";
+    $display_titles = IdsKsItem::getFieldValues('display_title', $items_ids);
+    $types_ids = IdsKsItem::getFieldValues('type', $items_ids);
+    $sources_ids = array();
+    if ($track_changes = IdsKsItem::getFieldValues('track_changes', $items_ids)) {
+      foreach($track_changes as $item_id => $track_changes_ids) {
+        if ($sources_changes = IdsKsTrackChanges::getFieldValues('source', $track_changes_ids)) {
+          foreach ($sources_changes as $source_id) {
+            $sources_ids[$item_id] = $source_id;
+          }
+        }
+      }
+    }    
+    foreach ($items_ids as $item_id) {
+      if (isset($display_titles[$item_id][0]) && $display_titles[$item_id][0]) {
+        $message .= ' - "' . $display_titles[$item_id][0] . '"';
+        if (isset($types[$types_ids[$item_id][0]]) && $types[$types_ids[$item_id][0]]) {
+          $message .= ' (' . $types[$types_ids[$item_id][0]] . ')';
+        }
+        if (isset($sources[end($sources_ids[$item_id])]) && $sources[end($sources_ids[$item_id])]) {
+          $message .= ' By ' . $sources[end($sources_ids[$item_id])];
+        }
+        $message .= t(' on ') . date(DATE_RFC2822, $items_notify[$item_id]);
+        if ($action !== 'deleted') {
+          $message .= ' - ' . IDSKS_OKHUB_URL .'/item/' . $item_id;
+        }
+        $message .= "\n";
+      }
+    }
+  }
+  return $message;
+}
+
+function idskshub_send_notifications_emails($operation, $uids, $email_message, $filters) {
+  $subject = t('Oriel OK Hub: ') . ucfirst(preg_replace('/_/',' ', $operation));
+/*
+  if ($filters['sources']) {
+    $subject .= ' - ' . t('Sources: ') . $filters['sources'];
+  }
+  else {
+    $subject .= ' - ' . t('All sources');
+  }  
+  if ($filters['types']) {
+    $subject .= ' - ' . t('Types: ') . $filters['types'];
+  }
+  else {
+    $subject .= ' - ' . t('All types') . "\n";
+  }
+*/
+
+  $users = user_load_multiple($uids);
+  foreach ($users as $user) {
+    if (isset($user->mail)) {
+      idskshub_send_email($user->mail, $user->language, $subject, $email_message);
+    }
+  }
+}
+
+function idskshub_send_email($to, $language, $subject, $body) {
+  if (empty($language)) {
+    $language = language_default();
+  }
+  $params = array(
+    'subject' => $subject,
+    'body' => $body,
+  );
+  drupal_mail('idskshub', 'notification', $to, $language, $params, IDSKS_FROM_EMAIL_ADDRESS);
+}
+
+function idskshub_mail($key, &$message, $params) {
+  $message['subject'] = $params['subject'];
+  $message['body'] = array($params['body']);
+}
+
+// Merge items.
+function idskshub_process_merge_items($items_ids) {
+  idskshub_set('merging_items', TRUE);
+  $mode = 'interactive';
+  if (count($items_ids) > 5) {
+    $mode = 'background';
+    drupal_set_message(t('Merging process continue in background. You can leave this page.'));
+  }
+  // In the future we could split the items into smaller chunks.
+  $batch = array(
+    'operations' => array(
+      array('idskshub_merge_items', array($items_ids)),
+      ),  
+    'title' => t('Merging items '),
+    'init_message' => t('Merging...'),
+    'file' => drupal_get_path('module', 'idskhub') . '/idskhub.module',
+  );
+  batch_set($batch);
+  if ($mode == 'background') {
+    background_batch_process_batch('imported-items-admin');
+  }
+  else {
+    batch_process('imported-items-admin');
+  }
+}
+
+function idskshub_merge_items($items_ids, &$context) { 
+  if (IdsKsItem::mergeMultipleItemsById($items_ids)) {
+    $context['message'] = t('Items merged.');
+  }
+  else {
+    $context['message'] = t('A problem occurred and the items could have not been merged. Please verify.');
+  }
+  idskshub_set('merging_items', FALSE);
+}
+
+// Generate paths to use a base for mappings
+function idskshub_paths_literals($item) {
+  $csv = array();
+  foreach ($item->versions_literals as $vl) {
+    foreach ($vl->literals as $lit) {
+      $format_code = (isset($lit->source->default_format->code)) ? $lit->source->default_format->code : '';
+      $source_code = (isset($lit->source->code)) ? $lit->source->code : '';
+      $original_path = (isset($lit->original_path)) ? $lit->original_path : '';
+      if ($lit->attributes) {
+        $attributes = array();
+        foreach ($lit->attributes as $attribute) {
+          $attributes[] = $attribute->name . '=' . $attribute->value;
+        }
+        if ($attributes) {
+          $attributes_str = implode(',', $attributes);
+        }
+      }
+      else {
+        $attributes_str = '';
+      }
+      $mapped_path = (isset($vl->path)) ? $vl->path : '';
+      $csv[] = "\"$format_code\",\"$source_code\",\"$original_path\",\"$attributes_str\",\"$mapped_path\",\"\",\"\"\n";
+    }
+  }
+  return $csv;
+}
+
+function idskshub_paths_item($item) {
+  $csv = idskshub_paths_literals($item);
+  if ($item->subitems) {
+    foreach ($item->subitems as $subitem) {
+      if ($item->root_attributes) {
+        foreach ($item->root_attributes as $attribute) {
+          if (preg_match('/\[(.+)\]:\[(.+)\]:(.+)/', $attribute->name, $matches)) {
+            $source_code = $matches[1];
+            $original_path = $matches[2];
+            $attr_name = $matches[3];
+            $attributes_str = $attr_name . '=' . $attribute->value;
+            $source = new IdsKsSource;
+            $source->code = $source_code;
+            $source->load();
+            $format_code = (isset($source->default_format->code)) ? $source->default_format->code : '';
+            $source_code = ($source->isSaved()) ? $source->code : '';
+            $csv[] = "\"$format_code\",\"$source_code\",\"$original_path\",\"$attributes_str\",\"$original_path\",\"\",\"\"\n";
+          }
+        }
+      }
+      $csv[] = idskshub_paths_item($subitem);
+    }
+  }
+  return implode(array_unique($csv));
+}
+
+
+// Implement hook_access.
+function idskshub_access($op, $task, $account = NULL, $entity_type = NULL) {
+  global $user;
+  if (!isset($account)) {
+    $account = $user;
+  }
+  return user_access('manage idsks', $account);
+}
+
+// Manage persistant variables.
+function idskshub_set($variable, $value) {
+  $variable = 'idskshub_' . $variable;
+  variable_set($variable, $value);
+}
+
+function idskshub_get($variable, $default = NULL) {
+  $variable = 'idskshub_' . $variable;
+  $value = variable_get($variable, $default);
+  return $value;
+}
+
+function idskshub_del($variable) {
+  $variable = 'idskshub_' . $variable;
+  variable_del($variable);
+}
+
+function idskshub_diff($obj1, $obj2) {
+  $class1 = get_class($obj1);
+  $class2 = get_class($obj2);
+  $equal = FALSE;
+  if ($class1 == $class2) {
+    $equal = $class1::equal($obj1, $obj2);
+  }
+  if ($equal) {
+    $ret = 0;
+  }
+  else { // array_udiff doesn't work ok if we always return 1 for different values, for instance.
+    $ret = strcmp(serialize($obj1), serialize($obj2)); 
+  }
+  return $ret;
+}
+
+function idskshub_change_namespace($str) {
+  return preg_replace('/([\-\w]+):([\-\w]+)/', '\1--\2', $str);
+}
+
+function idskshub_restore_namespace($str) {
+  return preg_replace('/([\-\w]+)\-\-([\-\w]+)/', '\1:\2', $str);
+}
+
+function idskshub_string_to_slug($string) {
+  $string = str_replace(array('/', ' ','-'), '_', $string);
+  $accents = '/&([A-Za-z]{1,2})(tilde|grave|acute|circ|cedil|uml|lig);/';
+  return urlencode(strtolower(preg_replace($accents, '$1', htmlentities(utf8_decode($string)))));
+}
+
+function idskshub_flatten_array($input) {
+  array_walk_recursive($input, function ($input) use (&$flattened) {$flattened[] = $input;});
+  if (isset($flattened)) {
+    return $flattened;
+  }
+  else {
+    return array();
+  }
+}
+
+
