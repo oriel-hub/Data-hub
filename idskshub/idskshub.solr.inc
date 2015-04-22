@@ -665,34 +665,43 @@ function simplexml_load_file_from_url($url, $timeout = 60){
 function idskshub_solr_schema_definitions() {
   $field_definitions = array();
   $solr_schema_url = 'http://'.IDSKS_SOLR_SERVER.'/solr/'.IDSKS_SOLR_CORE.'/admin/luke?show=schema';
-  if ($xml_schema = simplexml_load_file($solr_schema_url)) {
-    $json_schema = json_encode($xml_schema);
-    $array_schema = json_decode($json_schema ,TRUE);
-    $schema = $array_schema['lst'][2]['lst']; // $array_schema[2]['@attributes']['name'] == 'schema'
-    $fields = $schema[0]['lst'];  // $schema[0]['@attributes']['name'] == 'fields';
-    $dynamic_fields = $schema[1]['lst'];  // $schema[1]['@attributes']['name'] == 'fields';
-    $field_definitions = array();
-    foreach ($fields as $field) {
-      $field_name = $field['@attributes']['name'];
-      $field_type = $field['str'][0];
-      $field_flags = $field['str'][1];   
-      $field_definitions['types'][$field_name]  = $field_type;
-      if (!preg_match('/...M........../i', $field_flags)) {
+  $curl_handle=curl_init();
+  curl_setopt($curl_handle, CURLOPT_URL,$solr_schema_url);
+  curl_setopt($curl_handle, CURLOPT_CONNECTTIMEOUT, 2);
+  curl_setopt($curl_handle, CURLOPT_RETURNTRANSFER, 1);
+  curl_setopt($curl_handle, CURLOPT_USERAGENT, 'okhub.org');
+  $xml = curl_exec($curl_handle);
+  if (curl_exec($curl_handle) === false) {
+    trigger_error(t('Solr schema definition could not be retrieved from "@solr_schema_url": '. curl_error($curl_handle), array('@solr_schema_url' => $solr_schema_url)));
+    curl_close($curl_handle);
+  } else {
+    
+    if ($xml_schema = simplexml_load_string($xml)) {
+      $json_schema = json_encode($xml_schema);
+      $array_schema = json_decode($json_schema ,TRUE);
+      $schema = $array_schema['lst'][2]['lst']; // $array_schema[2]['@attributes']['name'] == 'schema'
+      $fields = $schema[0]['lst'];  // $schema[0]['@attributes']['name'] == 'fields';
+      $dynamic_fields = $schema[1]['lst'];  // $schema[1]['@attributes']['name'] == 'fields';
+      $field_definitions = array();
+      foreach ($fields as $field) {
+        $field_name = $field['@attributes']['name'];
+        $field_type = $field['str'][0];
+        $field_flags = $field['str'][1];   
+        $field_definitions['types'][$field_name]  = $field_type;
+        if (!preg_match('/...M........../i', $field_flags)) {
+          $field_definitions['single'][] = $field_name;
+        }
+      }
+      foreach ($dynamic_fields as $field) {
+       $field_name = $field['@attributes']['name'];
+       $field_type = $field['str'][0];
+       $field_flags = $field['str'][1];
+       $field_definitions['types'][$field_name]  = $field_type;
+       if (!preg_match('/...M........../i', $field_flags)) {
         $field_definitions['single'][] = $field_name;
+        }
       }
     }
-    foreach ($dynamic_fields as $field) {
-      $field_name = $field['@attributes']['name'];
-      $field_type = $field['str'][0];
-      $field_flags = $field['str'][1];
-      $field_definitions['types'][$field_name]  = $field_type;
-      if (!preg_match('/...M........../i', $field_flags)) {
-        $field_definitions['single'][] = $field_name;
-      }
-    }
-  }
-  else {
-    trigger_error(t('Solr schema definition could not be retrieved from "@solr_schema_url".', array('@solr_schema_url' => $solr_schema_url)), E_USER_NOTICE);
   }
   return $field_definitions;
 }
