@@ -81,18 +81,66 @@ function idskshub_search_api_items_indexed(SearchApiIndex $index, array $item_id
 // Implements hook_search_api_solr_documents_alter()
 function idskshub_search_api_solr_documents_alter(array &$documents, SearchApiIndex $index, array $items) {
   $entity_type = $index->getEntityType();
+  $fields_translatable = idskshub_get_solr_translatable();
+  $fields_types = idskshub_solr_fields_types(); // TODO: Change to use idskshub_solr_schema_definitions().
+  $index_related_items_fields = idskshub_index_related_items_fields();
   switch ($entity_type) {
+    /*** Index Sources ***/
     case 'ids_ks_source':
-      /* Add code to modify sources' fields here */
-      /* Example: Add field object_id with prefix "S" */
-      $prefix_sources = 'S';
+      $prefix_sources_identifier = 'S';
       foreach ($documents as $document) {
         $source_id_field = $document->getField('item_id');
-        $source_id_value = $source_id_field['value'];
-        $document->setField('object_id', $prefix_sources . $source_id_value); // For single-valued fields. Use $document->addField($field_name, $field_value) for multi-valued.
+        $source_id = $source_id_field['value'];
+        $source = new IdsKsSource;
+        $source->load($source_id);
+        if ($source->isSaved()) {
+          // object_id
+          $field_name = IDSKS_HUB_SOURCE_CODE . '_' . 'object_id' . '_' . IDSKS_NOT_APPLICABLE_LANGUAGE;
+          $field_value = $prefix_sources_identifier . $source_id;
+          $document->setField($field_name, $field_value); // For single-valued fields. Use $document->addField($field_name, $field_value) for multi-valued.
+          // language
+          if (isset($source->default_language) && $language_values = idskshub_get_metadata_languages_fields($source->default_language)) {
+            $language_xml_field_value = '<language>' . $language_values . '</language>';
+            $indexed_name = IDSKS_HUB_SOURCE_CODE . '_' . 'default_language' . '_' . IDSKS_NOT_APPLICABLE_LANGUAGE;
+            $indexed_value = "<languageList>$language_xml_field_value</languageList>";
+            $document->setField($indexed_name, $indexed_value);        
+          }
+          // other fields (see particular cases in http://data.okhub.org/fields-indexing)
+          foreach ($source as $field_name => $field_value) {
+            if ($field_value && !(isset($fields_types[$field_name]) && ($fields_types[$field_name] == 'ignore'))) {
+              if (is_scalar($field_value)) {
+                idskshub_add_solr_scalar($document, $field_name, $field_value, TRUE, $fields_types, $fields_translatable);              
+              }
+              elseif (is_array($field_value)) {
+                idskshub_add_solr_array($document, $field_name, $field_value, $fields_types, $fields_translatable);
+              }
+              elseif (is_object($field_value)) {
+                if (isset($field_value->vocabulary_machine_name)) { // it's a vocabulary term.
+                  if (isset($field_value->name)) {
+                    $indexed_name = IDSKS_HUB_SOURCE_CODE . '_' . $field_name . '_' . IDSKS_DEFAULT_LANGUAGE;
+                    $indexed_value = $field_value->name;
+                    idskshub_add_solr_scalar($document, $indexed_name, $indexed_value, TRUE, $fields_types, $fields_translatable);              
+                  }
+                }
+                else {
+                  if ($object_xml = idskshub_get_object_xml($field_name, $field_value)) {
+                    $indexed_name = IDSKS_HUB_SOURCE_CODE . '_' . $field_name . '_' . IDSKS_NOT_APPLICABLE_LANGUAGE;
+                    $indexed_value = '<' . $field_name . 'List>' . $object_xml . '</' . $field_name . 'List>';
+                    $document->setField($indexed_name, $indexed_value);        
+                  }
+                }
+              }
+            }
+          }
+        }
       }
       break;
+    /*** Index Items ***/
     case 'ids_ks_item':
+      $path_title = 'title'; // Mapped path to look for titles in (used to include the titles of related items such as categories). TODO: Generalise!. See idskshub_index_related_items_fields().
+      $hub_fields_definitions = idskshub_get_solr_hub_fields_definitions();
+      $required_fields = idskshub_get_solr_hub_required_fields();
+      //$hub_types = idskshub_get_types_names();
       $metadata_xml_field_name = IDSKS_LANGUAGES_XML_FIELD . '_' . IDSKS_HUB_SOURCE_CODE . '_' . IDSKS_NOT_APPLICABLE_LANGUAGE;
       $hub_solr_schema = idskshub_get('hub_solr_schema', array('types'=>array(), 'single'=>array()));
       $titles_items = array();
@@ -102,14 +150,7 @@ function idskshub_search_api_solr_documents_alter(array &$documents, SearchApiIn
       else {
         $language_codes_regexp = '/([a-z]){2}/';
       }
-      $path_title = 'title'; // Mapped path to look for titles in (used to include the titles of related items such as categories). TODO: Generalise!. See idskshub_index_related_items_fields().
-      $fields_translatable = idskshub_get_solr_translatable();
-      $fields_types = idskshub_solr_fields_types(); // TODO: Change to use idskshub_solr_schema_definitions().
-      $hub_fields_definitions = idskshub_get_solr_hub_fields_definitions();
-      $required_fields = idskshub_get_solr_hub_required_fields();
-      $hub_types = idskshub_get_types_names();
-      $index_related_items_fields = idskshub_index_related_items_fields();
-      $item = new IdsKsItem();
+      $item = new IdsKsItem;
       foreach ($documents as $document) {
         $metadata_languages = array();
         $has_metadata_language_field = array();
@@ -140,7 +181,7 @@ function idskshub_search_api_solr_documents_alter(array &$documents, SearchApiIn
                 $tag_name = array_pop(explode('/', $versions_literal->path));
                 $fields_source[$tag_name] = array();
                 $fields_language[$tag_name] = array();
-                if (!empty($versions_literal->literals) && !(isset($fields_types[$tag_name]) && ($fields_types[$tag_name] === 'ignore'))) {
+                if (!empty($versions_literal->literals) && !(isset($fields_types[$tag_name]) && ($fields_types[$tag_name] == 'ignore'))) {
                   foreach ($versions_literal->literals as $literal) {
                     if (isset($literal->source)) {
                       $source_id = $literal->source->getId();
@@ -238,9 +279,11 @@ function idskshub_search_api_solr_documents_alter(array &$documents, SearchApiIn
                 $metadata_xml_field_value .= '<language>' . $metadata_language_fields . '</language>';
               }
             }
-            $metadata_xml_field_value = "<languageList>$metadata_xml_field_value</languageList>";
-            idskshub_add_solr_not_duplicated($document, $metadata_xml_field_name, $metadata_xml_field_value, $hub_solr_schema);              
-            idskshub_solr_add_hub_fields($metadata_xml_field_name, $document, $fields_language, $fields_source, $fields_translatable, $hub_fields_definitions, $hub_fields_values, $hub_solr_schema);
+            if ($metadata_xml_field_value) {
+              $metadata_xml_field_value = "<languageList>$metadata_xml_field_value</languageList>";
+              idskshub_add_solr_not_duplicated($document, $metadata_xml_field_name, $metadata_xml_field_value, $hub_solr_schema);              
+              idskshub_solr_add_hub_fields($metadata_xml_field_name, $document, $fields_language, $fields_source, $fields_translatable, $hub_fields_definitions, $hub_fields_values, $hub_solr_schema);
+            }
             // Add information about sources present in this doc.
             foreach (array_unique($available_sources) as $available_source) {
               idskshub_add_solr_not_duplicated($document, IDSKS_SOURCES_FIELD, $available_source, $hub_solr_schema);
@@ -400,9 +443,9 @@ function idskshub_search_api_solr_documents_alter(array &$documents, SearchApiIn
           }
         }
       }
-      debug($documents, 'Indexing...', TRUE);
       break; // End case entity type is 'ids_ks_item'.
   } // switch
+  debug($documents, 'Indexing...', TRUE);
 }
 
 // Retrieve "titles" from items. Used to add related items' titles is search and facet fields.
@@ -446,7 +489,102 @@ function idskshub_search_api_solr_search_results_alter(&$results, $query, $respo
 }
 
 /* ------------ Additional functions ------------- */
-// Add field to the index, making sure that no duplicated values are generated.
+
+function idskshub_add_solr_scalar($document, $field_name, $field_value, $single, $fields_types, $fields_translatable) {
+  if (isset($fields_types[$field_name])) { // For fields defined as int, date, etc. - to make sure that they have the right format.
+    $value = idskshub_solr_field_assign_type($value, $fields_types[$field_name]);
+  }
+  if (in_array($field_name, $fields_translatable)) {
+    $field_name = IDSKS_HUB_SOURCE_CODE . '_' . $field_name . '_' . IDSKS_DEFAULT_LANGUAGE; // See in case these values are added in multiple/other language at some point.
+  }
+  else {
+    $field_name = IDSKS_HUB_SOURCE_CODE . '_' . $field_name . '_' . IDSKS_NOT_APPLICABLE_LANGUAGE;
+  }
+  if ($single) {
+    $document->setField($field_name, $field_value);
+  }
+  else {
+    $document->addField($field_name, $field_value);
+  }
+}
+
+function idskshub_add_solr_array($document, $field_name, $arr, $fields_types, $fields_translatable) { // The only possibility is that it's a non-associative array of scalars or objects.
+  $xml = '';
+  foreach ($arr as $field_value) {
+    if (is_scalar($field_value)) {
+      idskshub_add_solr_scalar($document, $field_name, $field_value, FALSE, $fields_types, $fields_translatable);              
+    }
+    elseif (is_object($field_value)) { 
+      if (isset($field_value->vocabulary_machine_name)) { // it's a vocabulary term.
+        if (isset($field_value->name)) {
+          $indexed_name = IDSKS_HUB_SOURCE_CODE . '_' . $field_name . '_' . IDSKS_DEFAULT_LANGUAGE;
+          $indexed_value = $field_value->name;
+          idskshub_add_solr_scalar($document, $indexed_name, $indexed_value, FALSE, $fields_types, $fields_translatable);              
+        }
+      }
+      else {
+        $xml .= idskshub_get_object_xml($field_name, $field_value);
+      }
+    }
+  }
+  if ($xml) {
+    $indexed_name = IDSKS_HUB_SOURCE_CODE . '_' . $field_name . '_' . IDSKS_NOT_APPLICABLE_LANGUAGE;
+    $indexed_value = '<' . $field_name . 'List>' . $xml . '</' . $field_name . 'List>';
+    $document->addField($indexed_name, $indexed_value);
+  }
+}
+
+function idskshub_get_object_xml($field_name, $obj) {
+  $xml = '';
+  foreach ($obj as $field => $value) { // In the future, idskshub_index_related_items_fields() could be use to indicate which properties to index.
+    if (isset($value)) {
+      if (is_scalar($value)) {
+        $xml .= "<$field>" . $value . "</$field>";
+      }
+      elseif (is_array($value)) {
+        if ($array_xml = idskshub_get_array_xml($field, $value)) {
+          $xml .= '<' . $field . 'List>' . $array_xml . '</' . $field . 'List>';        
+        }
+      }
+      elseif (is_object($value)) {
+        if ($object_xml = idskshub_get_object_xml($field, $value)) {
+          $xml .= '<' . $field . 'List>' . $object_xml . '</' . $field . 'List>';        
+        }
+      }
+    }
+  }
+  if ($xml) {
+    $xml = "<$field_name>" . $xml . "</$field_name>";
+  }
+  return $xml;
+}
+
+function idskshub_get_array_xml($field_name, $arr) {
+  $is_assoc = count(array_filter(array_keys($arr), 'is_string'));
+  $xml = '';
+  foreach ($arr as $key => $value) {
+    $field = ($is_assoc) ? $key : 'list-item';
+    if (is_scalar($value)) {
+      $xml .= "<$field>" . $value . "</$field>";
+    }
+    elseif (is_array($value)) {
+      if ($array_xml = idskshub_get_array_xml($field, $value)) {
+        $xml .= '<' . $field . 'List>' . $array_xml . '</' . $field . 'List>';        
+      }
+    }
+    elseif (is_object($value)) {
+      if ($object_xml = idskshub_get_object_xml($field, $value)) {
+        $xml .= '<' . $field . 'List>' . $object_xml . '</' . $field . 'List>';        
+      }
+    }
+  }
+  if ($xml) {
+    $xml = "<$field_name>" . $xml . "</$field_name>";
+  }
+  return $xml;
+}
+
+// Add item's value to the index, making sure that no duplicated values are generated.
 function idskshub_add_solr_not_duplicated($document, $field_name, $field_value, $hub_solr_schema) {
   $item_id = $document->getField('item_id');
   if ($existing_values = $document->getField($field_name)) {

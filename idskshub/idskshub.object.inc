@@ -343,8 +343,18 @@ class IdsKsObject {
   }
 
   // Get the name of an entity field, corresponding to a property of the current object.
-  protected function getFieldName($property) {
+  public function getFieldName($property) {
+//    $field_name = 'field_' . self::getType() . '_' . $property;
+    $entity_type = self::getEntityType();
+    $bundle_name = self::getBundleType();
     $field_name = 'field_' . self::getType() . '_' . $property;
+    if (!$field_exists = field_info_instance($entity_type, $field_name, $bundle_name)) {
+      $field_name = 'field_' . $property;
+      $field_exists = field_info_instance($entity_type, $field_name, $bundle_name);
+    }
+    if (!$field_exists) {
+      $field_name = $property;
+    }
     return $field_name;
   }
 

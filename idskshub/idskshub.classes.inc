@@ -21,6 +21,17 @@ class IdsKsContributor extends IdsKsObject {
   public $acronym;
   public $public_url;
   public $vocabulary; // Not using this at this stage.
+  public $description;
+  public $email;
+  public $logo;
+  public $partner;
+  public $priority;
+  public $location;
+  public $type;
+  public $organisation_type_term;
+  public $contact_name;
+  public $contact_role;
+  public $contact_email;
 } // class IdsKsContributor
 
 class IdsKsFeed extends IdsKsObject {
@@ -64,6 +75,17 @@ class IdsKsSource extends IdsKsObject {
   public $identifiers; // For example, in the case of Eldis documents, <root>:'object_id'.
   public $compound_key; // If identifiers should be connected by AND.
   public $is_semantic; // Indicates if the source corresponds to an external semantic augmentation service (eg: Open Calais).
+  public $description;
+  public $logo;
+  public $website;
+  public $theme;
+  public $keywords;
+  public $licence_description;
+  public $licence_url;
+  public $taxonomies_in_use;
+  public $contact_name;
+  public $contact_role;
+  public $contact_email;
 } // class IdsKsSource
 
 class IdsKsTrackChanges extends IdsKsObject {

@@ -392,7 +392,7 @@ function idskshub_solr_fields_single_valued() {
   return $fields_types;
 }
 
-// Fields only used for faceted searches in Drupal (required by Search API). 
+// Fields only used for faceted searches in Drupal (required by Search API). - *** Not being used currently ***.
 // TODO: Is there a Facet API function to retrieve these fields from the database?
 function idskshub_solr_facets_fields() {
   $facets = array(
