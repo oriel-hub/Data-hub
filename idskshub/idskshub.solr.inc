@@ -89,6 +89,7 @@ function idskshub_search_api_solr_documents_alter(array &$documents, SearchApiIn
     case 'ids_ks_source':
       $prefix_sources_identifier = 'S';
       foreach ($documents as $document) {
+//drupal_set_message(print_r($document, true));
         $source_id_field = $document->getField('item_id');
         $source_id = $source_id_field['value'];
         $source = new IdsKsSource;
@@ -98,6 +99,24 @@ function idskshub_search_api_solr_documents_alter(array &$documents, SearchApiIn
           $field_name = IDSKS_HUB_SOURCE_CODE . '_' . 'object_id' . '_' . IDSKS_NOT_APPLICABLE_LANGUAGE;
           $field_value = $prefix_sources_identifier . $source_id;
           $document->setField($field_name, $field_value); // For single-valued fields. Use $document->addField($field_name, $field_value) for multi-valued.
+
+          // hub_item_id
+          $document->setField('hub_item_id', $source_id); 
+          
+          // item_type / hub_item_type
+          $document->setField('item_type', 'Source'); 
+          $document->setField('hub_item_type', 'Source'); 
+          
+          // Title
+          $document->setField('title_hub_en', $source->name);
+          // $document->setField('title', $source->name);
+
+
+          // object_type
+          $field_name = IDSKS_HUB_SOURCE_CODE . '_' . 'object_type' . '_' . IDSKS_NOT_APPLICABLE_LANGUAGE;
+          $field_value = 'Source';
+          $document->setField($field_name, $field_value); 
+
           // language
           if (isset($source->default_language) && $language_values = idskshub_get_metadata_languages_fields($source->default_language)) {
             $language_xml_field_value = '<language>' . $language_values . '</language>';

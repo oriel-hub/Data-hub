@@ -19,7 +19,7 @@ require_once('idskshub.idsksversionsliteral.inc');
 class IdsKsContributor extends IdsKsObject {
   public $name;
   public $acronym;
-  public $public_url;
+  public $website;
   public $vocabulary; // Not using this at this stage.
   public $description;
   public $email;
@@ -67,6 +67,7 @@ class IdsKsRelationship extends IdsKsObject {
 } // class IdsKsRelationship
 
 class IdsKsSource extends IdsKsObject {
+//  public $type;
   public $name;
   public $code;
   public $contributor;

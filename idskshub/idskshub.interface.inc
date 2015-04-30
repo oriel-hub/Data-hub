@@ -1704,6 +1704,9 @@ function idskshub_display_usedby($id, $type) {
         $literals_ids = IdsKsLiteral::getParentsIds(array('source' => $id));
         $track_changes_ids = IdsKsTrackChanges::getParentsIds(array('source' => $id));
         break;
+      case 'contributor':
+        $sources_ids = IdsKsSource::getParentsIds(array('contributor' => $id));
+        break;
       case 'type':
         $items_ids = IdsKsItem::getParentsIds(array('type' => $id));
         $feeds_ids = IdsKsFeed::getParentsIds(array('default_type' => $id));
