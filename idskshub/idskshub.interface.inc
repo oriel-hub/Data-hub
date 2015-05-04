@@ -163,8 +163,8 @@ function idskshub_validate_slug($field_slug, $field_orig, $form, &$form_state) {
         form_set_error($field_orig, t("The field @field can not be left empty.", array('@field' => $field_orig)));
       }
     }
-    elseif (!preg_match('/^[_a-zA-Z0-9]+$/', $field_slug_form['value'])) {
-      form_set_error($field_slug, t("The field @field can only contain alphanumeric characters and underscores.", array('@field' => $field_slug)));
+    elseif (!preg_match('/^[a-z][_a-z0-9]+$/', $field_slug_form['value'])) {
+      form_set_error($field_slug, t("The field @field can only start with a lower case letter and contain lower case letters, digits and underscores.", array('@field' => $field_slug)));
     }
   }
 }
