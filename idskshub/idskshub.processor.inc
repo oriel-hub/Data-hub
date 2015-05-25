@@ -125,9 +125,9 @@ class IdsKsProcessor {
     if ($force_import['force'] || !IdsKsTrackChanges::hashExists($hash)) {
       $xml_item = simplexml_load_string($serialized_item);
       $new_item = new IdsKsItem();
-      //$new_item->setItemType($source, $feed, $type_name); // Try to assign type before populating (to use in relationships).  
+      $new_item->setItemType($source, $feed, $type_name); // Try to assign type before populating (to use in relationships, mappings, etc).  
       $new_item->populateItemXML($xml_item, $item_path, $source, $format);
-      $new_item->setItemType($source, $feed, $type_name); // Update type based on the items' content.
+      //$new_item->setItemType($source, $feed, $type_name); // Update type based on the items' content. Now we are asking to indicate the type beforehand (in feeds or in manual imports).
       if (!empty($root_file_attributes)) {
         $new_item->addRootAttributes($root_file_attributes, $source);
       }

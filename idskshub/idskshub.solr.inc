@@ -84,66 +84,107 @@ function idskshub_search_api_solr_documents_alter(array &$documents, SearchApiIn
   $fields_translatable = idskshub_get_solr_translatable();
   $fields_types = idskshub_solr_fields_types(); // TODO: Change to use idskshub_solr_schema_definitions().
   $index_related_items_fields = idskshub_index_related_items_fields();
+  $hub_fields_definitions = idskshub_get_solr_hub_fields_definitions();
+  $required_fields = idskshub_get_solr_hub_required_fields();
+  $hub_solr_schema = idskshub_get('hub_solr_schema', array('types'=>array(), 'single'=>array()));
+  if ($language_codes = array_keys(idskshub_supported_languages())) {
+    $language_codes_regexp = '/(' . implode('|', $language_codes) . ')/';
+  }
+  else {
+    $language_codes_regexp = '/([a-z]){2}/';
+  } 
   switch ($entity_type) {
     /*** Index Sources ***/
     case 'ids_ks_source':
       $prefix_sources_identifier = 'S';
       foreach ($documents as $document) {
-//drupal_set_message(print_r($document, true));
+        // Initialize arrays with hub-generated fields.
+        $fields_source = array();
+        $fields_language = array();
+        $hub_fields_values = array();
+        $hub_values = array();
         $source_id_field = $document->getField('item_id');
         $source_id = $source_id_field['value'];
         $source = new IdsKsSource;
-        $source->load($source_id);
+        $source->load($source_id); // Retrieve source object based on the entity id.
         if ($source->isSaved()) {
           // object_id
-          $field_name = IDSKS_HUB_SOURCE_CODE . '_' . 'object_id' . '_' . IDSKS_NOT_APPLICABLE_LANGUAGE;
+          $field_name = IDSKS_OKHUB_SOURCE_CODE . '_' . 'object_id' . '_' . IDSKS_NOT_APPLICABLE_LANGUAGE;
           $field_value = $prefix_sources_identifier . $source_id;
+          // Add the field to the index.
           $document->setField($field_name, $field_value); // For single-valued fields. Use $document->addField($field_name, $field_value) for multi-valued.
+          // Add the field to the arrays that keep track of the fields values (indexed by source / language), in order to generate additional (search, count, filter, etc.) hub-generated fields, as defined in idskshub_get_solr_hub_fields_definitions() and idskshub_get_solr_hub_fields_values_definitions() functions, defined in idskshub.solrfields.inc.
+          $fields_source['object_id'][IDSKS_OKHUB_SOURCE_CODE] = array($field_value);
+          $fields_language['object_id'][IDSKS_NOT_APPLICABLE_LANGUAGE] = array($field_value); 
+          // Call the function that generates the additional (hub) fields and adds them to the index.
+          idskshub_solr_add_hub_fields('object_id', $document, $fields_language, $fields_source, $fields_translatable, $hub_fields_definitions, $hub_fields_values, $hub_solr_schema);
 
-          // hub_item_id
-          $document->setField('hub_item_id', $source_id); 
+          // item_id
+          // $document->setField('item_id', $source_id); - It's not necessary to add the field, as it's already in the document.
+          // Generated fields based on item_id - is this needed by the API?
+          $fields_source['item_id'][IDSKS_HUB_SOURCE_CODE] = array($source_id);
+          $fields_language['item_id'][IDSKS_NOT_APPLICABLE_LANGUAGE] = array($source_id); 
+          idskshub_solr_add_hub_fields('item_id', $document, $fields_language, $fields_source, $fields_translatable, $hub_fields_definitions, $hub_fields_values, $hub_solr_schema);
           
           // item_type / hub_item_type
-          $document->setField('item_type', 'Source'); 
-          $document->setField('hub_item_type', 'Source'); 
+          // Add field to the index.
+          $document->setField('item_type', 'Source');
+          // Generated fields based on item_type - is this needed by the API?
+          $fields_source['item_type'][IDSKS_HUB_SOURCE_CODE] = array('Source');
+          $fields_language['item_type'][IDSKS_NOT_APPLICABLE_LANGUAGE] = array('Source'); 
+          idskshub_solr_add_hub_fields('item_type', $document, $fields_language, $fields_source, $fields_translatable, $hub_fields_definitions, $hub_fields_values, $hub_solr_schema);
           
           // Title
-          $document->setField('title_hub_en', $source->name);
-          // $document->setField('title', $source->name);
-
-
+          $field_name = IDSKS_OKHUB_SOURCE_CODE . '_' . 'title' . '_' . IDSKS_DEFAULT_LANGUAGE;
+          $document->setField($field_name, $source->name);
+          $fields_source['title'][IDSKS_OKHUB_SOURCE_CODE] = array($source->name);
+          $fields_language['title'][IDSKS_DEFAULT_LANGUAGE] = array($source->name); 
+          idskshub_solr_add_hub_fields('title', $document, $fields_language, $fields_source, $fields_translatable, $hub_fields_definitions, $hub_fields_values, $hub_solr_schema);
+          
           // object_type
-          $field_name = IDSKS_HUB_SOURCE_CODE . '_' . 'object_type' . '_' . IDSKS_NOT_APPLICABLE_LANGUAGE;
+          $field_name = IDSKS_OKHUB_SOURCE_CODE . '_' . 'object_type' . '_' . IDSKS_NOT_APPLICABLE_LANGUAGE;
           $field_value = 'Source';
-          $document->setField($field_name, $field_value); 
+          $document->setField($field_name, $field_value);
+          // This field is not used to generate additional fields. If needed, use the same code as object_id replacing the field name.
+
+          // Examples: contributor's name and acronym used to generate additional hub fields (search, facet) - as defined in idskshub.solrfields.inc).
+          if (isset($source->contributor->name)) {
+            $fields_source['contributor'][IDSKS_OKHUB_SOURCE_CODE] = array($source->contributor->name);
+            $fields_language['contributor'][IDSKS_DEFAULT_LANGUAGE] = array($source->contributor->name); 
+            idskshub_solr_add_hub_fields('contributor', $document, $fields_language, $fields_source, $fields_translatable, $hub_fields_definitions, $hub_fields_values, $hub_solr_schema);
+          }
+          if (isset($source->contributor->acronym)) {
+            $fields_source['acronym'][IDSKS_OKHUB_SOURCE_CODE] = array($source->contributor->acronym);
+            $fields_language['acronym'][IDSKS_DEFAULT_LANGUAGE] = array($source->contributor->acronym); 
+            idskshub_solr_add_hub_fields('acronym', $document, $fields_language, $fields_source, $fields_translatable, $hub_fields_definitions, $hub_fields_values, $hub_solr_schema);
+          }
 
           // language
           if (isset($source->default_language) && $language_values = idskshub_get_metadata_languages_fields($source->default_language)) {
             $language_xml_field_value = '<language>' . $language_values . '</language>';
-            $indexed_name = IDSKS_HUB_SOURCE_CODE . '_' . 'default_language' . '_' . IDSKS_NOT_APPLICABLE_LANGUAGE;
+            $indexed_name = IDSKS_OKHUB_SOURCE_CODE . '_' . 'default_language' . '_' . IDSKS_NOT_APPLICABLE_LANGUAGE;
             $indexed_value = "<languageList>$language_xml_field_value</languageList>";
             $document->setField($indexed_name, $indexed_value);        
           }
-          // other fields (see particular cases in http://data.okhub.org/fields-indexing)
+
+          // other generic fields (see particular cases in http://data.okhub.org/fields-indexing)
           foreach ($source as $field_name => $field_value) {
             if ($field_value && !(isset($fields_types[$field_name]) && ($fields_types[$field_name] == 'ignore'))) {
               if (is_scalar($field_value)) {
-                idskshub_add_solr_scalar($document, $field_name, $field_value, TRUE, $fields_types, $fields_translatable);              
+                idskshub_add_solr_scalar($document, $field_name, $field_value, TRUE, $fields_types, $fields_language, $fields_source, $fields_translatable, $hub_fields_definitions, $hub_fields_values, $hub_solr_schema);    
               }
               elseif (is_array($field_value)) {
-                idskshub_add_solr_array($document, $field_name, $field_value, $fields_types, $fields_translatable);
+                idskshub_add_solr_array($document, $field_name, $field_value, $fields_types, $fields_language, $fields_source, $fields_translatable, $hub_fields_definitions, $hub_fields_values, $hub_solr_schema);
               }
               elseif (is_object($field_value)) {
                 if (isset($field_value->vocabulary_machine_name)) { // it's a vocabulary term.
                   if (isset($field_value->name)) {
-                    $indexed_name = IDSKS_HUB_SOURCE_CODE . '_' . $field_name . '_' . IDSKS_DEFAULT_LANGUAGE;
-                    $indexed_value = $field_value->name;
-                    idskshub_add_solr_scalar($document, $indexed_name, $indexed_value, TRUE, $fields_types, $fields_translatable);              
+                    idskshub_add_solr_scalar($document, $field_name, $field_value->name, TRUE, $fields_types, $fields_language, $fields_source, $fields_translatable, $hub_fields_definitions, $hub_fields_values, $hub_solr_schema);              
                   }
                 }
                 else {
                   if ($object_xml = idskshub_get_object_xml($field_name, $field_value)) {
-                    $indexed_name = IDSKS_HUB_SOURCE_CODE . '_' . $field_name . '_' . IDSKS_NOT_APPLICABLE_LANGUAGE;
+                    $indexed_name = IDSKS_OKHUB_SOURCE_CODE . '_' . $field_name . '_' . IDSKS_NOT_APPLICABLE_LANGUAGE;
                     $indexed_value = '<' . $field_name . 'List>' . $object_xml . '</' . $field_name . 'List>';
                     $document->setField($indexed_name, $indexed_value);        
                   }
@@ -157,24 +198,16 @@ function idskshub_search_api_solr_documents_alter(array &$documents, SearchApiIn
     /*** Index Items ***/
     case 'ids_ks_item':
       $path_title = 'title'; // Mapped path to look for titles in (used to include the titles of related items such as categories). TODO: Generalise!. See idskshub_index_related_items_fields().
-      $hub_fields_definitions = idskshub_get_solr_hub_fields_definitions();
-      $required_fields = idskshub_get_solr_hub_required_fields();
-      //$hub_types = idskshub_get_types_names();
       $metadata_xml_field_name = IDSKS_LANGUAGES_XML_FIELD . '_' . IDSKS_HUB_SOURCE_CODE . '_' . IDSKS_NOT_APPLICABLE_LANGUAGE;
-      $hub_solr_schema = idskshub_get('hub_solr_schema', array('types'=>array(), 'single'=>array()));
       $titles_items = array();
-      if ($language_codes = array_keys(idskshub_supported_languages())) {
-        $language_codes_regexp = '/(' . implode('|', $language_codes) . ')/';
-      }
-      else {
-        $language_codes_regexp = '/([a-z]){2}/';
-      }
       $item = new IdsKsItem;
       foreach ($documents as $document) {
         $metadata_languages = array();
         $has_metadata_language_field = array();
-        $fields_source = array('item_type' => array('hub' => array()), 'item_id' => array('hub' => array()));
-        $fields_language = array('item_type' => array('zz' => array()), 'item_id' => array('zz' => array()));
+        //$fields_source = array('item_type' => array('hub' => array()), 'item_id' => array('hub' => array()));
+        //$fields_language = array('item_type' => array('zz' => array()), 'item_id' => array('zz' => array()));
+        $fields_source = array();
+        $fields_language = array();
         $hub_fields_values = array();
         $hub_values = array();
         $available_sources = array();
@@ -182,13 +215,13 @@ function idskshub_search_api_solr_documents_alter(array &$documents, SearchApiIn
         $item->load($item_id['value']);
         if ($item->isSaved()) {
           // Generate fields based on item_id. It is already indexed, so there's no need to call setField.
-          $fields_source['item_id']['hub'] = array($item_id['value']);
-          $fields_language['item_id']['zz'] = array($item_id['value']); 
+          $fields_source['item_id'][IDSKS_HUB_SOURCE_CODE] = array($item_id['value']);
+          $fields_language['item_id'][IDSKS_NOT_APPLICABLE_LANGUAGE] = array($item_id['value']); 
           idskshub_solr_add_hub_fields('item_id', $document, $fields_language, $fields_source, $fields_translatable, $hub_fields_definitions, $hub_fields_values, $hub_solr_schema);
           // Set item type
           if (!empty($item->type->name)) { 
-            $fields_source['item_type']['hub'] = array($item->type->name);
-            $fields_language['item_type']['zz'] = array($item->type->name); 
+            $fields_source['item_type'][IDSKS_HUB_SOURCE_CODE] = array($item->type->name);
+            $fields_language['item_type'][IDSKS_NOT_APPLICABLE_LANGUAGE] = array($item->type->name); 
             $document->setField('item_type', $item->type->name);
             idskshub_solr_add_hub_fields('item_type', $document, $fields_language, $fields_source, $fields_translatable, $hub_fields_definitions, $hub_fields_values, $hub_solr_schema);
           }  
@@ -509,36 +542,40 @@ function idskshub_search_api_solr_search_results_alter(&$results, $query, $respo
 
 /* ------------ Additional functions ------------- */
 
-function idskshub_add_solr_scalar($document, $field_name, $field_value, $single, $fields_types, $fields_translatable) {
+function idskshub_add_solr_scalar($document, $field_name, $field_value, $single, $fields_types, $fields_language, $fields_source, $fields_translatable, $hub_fields_definitions, $hub_fields_values, $hub_solr_schema) {
   if (isset($fields_types[$field_name])) { // For fields defined as int, date, etc. - to make sure that they have the right format.
-    $value = idskshub_solr_field_assign_type($value, $fields_types[$field_name]);
+    $field_value = idskshub_solr_field_assign_type($field_value, $fields_types[$field_name]);
   }
   if (in_array($field_name, $fields_translatable)) {
-    $field_name = IDSKS_HUB_SOURCE_CODE . '_' . $field_name . '_' . IDSKS_DEFAULT_LANGUAGE; // See in case these values are added in multiple/other language at some point.
+    $language = IDSKS_DEFAULT_LANGUAGE;
+    $indexed_name = IDSKS_OKHUB_SOURCE_CODE . '_' . $field_name . '_' . IDSKS_DEFAULT_LANGUAGE; // See in case these values are added in multiple/other language at some point.
   }
   else {
-    $field_name = IDSKS_HUB_SOURCE_CODE . '_' . $field_name . '_' . IDSKS_NOT_APPLICABLE_LANGUAGE;
+    $language = IDSKS_DEFAULT_LANGUAGE;
+    $indexed_name = IDSKS_OKHUB_SOURCE_CODE . '_' . $field_name . '_' . IDSKS_NOT_APPLICABLE_LANGUAGE;
   }
   if ($single) {
-    $document->setField($field_name, $field_value);
+    $document->setField($indexed_name, $field_value);
   }
   else {
-    $document->addField($field_name, $field_value);
+    $document->addField($indexed_name, $field_value);
   }
+  // Use it to (potentially), generate additional hub field.
+  $fields_source[$field_name][IDSKS_OKHUB_SOURCE_CODE] = array($field_value);
+  $fields_language[$field_name][$language] = array($field_value); 
+  idskshub_solr_add_hub_fields($field_name, $document, $fields_language, $fields_source, $fields_translatable, $hub_fields_definitions, $hub_fields_values, $hub_solr_schema);
 }
 
-function idskshub_add_solr_array($document, $field_name, $arr, $fields_types, $fields_translatable) { // The only possibility is that it's a non-associative array of scalars or objects.
+function idskshub_add_solr_array($document, $field_name, $arr, $fields_types, $fields_language, $fields_source, $fields_translatable, $hub_fields_definitions, $hub_fields_values, $hub_solr_schema) { // The only possibility is that it's a non-associative array of scalars or objects.
   $xml = '';
   foreach ($arr as $field_value) {
     if (is_scalar($field_value)) {
-      idskshub_add_solr_scalar($document, $field_name, $field_value, FALSE, $fields_types, $fields_translatable);              
+      idskshub_add_solr_scalar($document, $field_name, $field_value, FALSE, $fields_types, $fields_language, $fields_source, $fields_translatable, $hub_fields_definitions, $hub_fields_values, $hub_solr_schema);              
     }
     elseif (is_object($field_value)) { 
       if (isset($field_value->vocabulary_machine_name)) { // it's a vocabulary term.
         if (isset($field_value->name)) {
-          $indexed_name = IDSKS_HUB_SOURCE_CODE . '_' . $field_name . '_' . IDSKS_DEFAULT_LANGUAGE;
-          $indexed_value = $field_value->name;
-          idskshub_add_solr_scalar($document, $indexed_name, $indexed_value, FALSE, $fields_types, $fields_translatable);              
+          idskshub_add_solr_scalar($document, $field_name, $field_value->name, FALSE, $fields_types, $fields_language, $fields_source, $fields_translatable, $hub_fields_definitions, $hub_fields_values, $hub_solr_schema);              
         }
       }
       else {
@@ -547,7 +584,7 @@ function idskshub_add_solr_array($document, $field_name, $arr, $fields_types, $f
     }
   }
   if ($xml) {
-    $indexed_name = IDSKS_HUB_SOURCE_CODE . '_' . $field_name . '_' . IDSKS_NOT_APPLICABLE_LANGUAGE;
+    $indexed_name = IDSKS_OKHUB_SOURCE_CODE . '_' . $field_name . '_' . IDSKS_NOT_APPLICABLE_LANGUAGE;
     $indexed_value = '<' . $field_name . 'List>' . $xml . '</' . $field_name . 'List>';
     $document->addField($indexed_name, $indexed_value);
   }

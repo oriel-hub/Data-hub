@@ -1465,6 +1465,7 @@ function idskshub_newmapping_form($form, $form_state) {
   $paths_destination[0] = '-- Add new --';
   $options_formats = array('' => 'All formats') + idskshub_get_formats_codes();
   $options_sources = array('' => 'All sources') + idskshub_get_sources_codes();
+  $options_types = array('' => 'All types') + idskshub_get_types_names();
   $options_relationships = array(0 => 'Relationship type') + idskshub_get_relationship_ids();
   $options_actions = array('' => 'Do with field') + idskshub_mapping_actions();
   $form['mapping']['format_code'] = array(
@@ -1484,6 +1485,15 @@ function idskshub_newmapping_form($form, $form_state) {
     '#type' => 'select',
     '#options' => $options_sources,
     '#title' => t('Source'),
+  );
+  $form['mapping']['type'] = array(
+    '#required' => '0',
+    '#multiple' => '0',
+    '#description' => t('The item type to apply the mapping to.'),
+    '#weight' => '12',
+    '#type' => 'select',
+    '#options' => $options_types,
+    '#title' => t('Type'),
   );
   $form['mapping']['origin'] = array(
     '#type' => 'fieldset', 
@@ -1607,12 +1617,13 @@ function idskshub_newmapping_form_validate($form, &$form_state) {
 function idskshub_newmapping_form_submit($form, &$form_state) {
   $format_code = $form_state['values']['format_code'];
   $source_code = $form_state['values']['source_code'];
+  $type = $form_state['values']['type'];
   $path_origin = $form_state['values']['path_origin'];
   $attributes_origin = $form_state['values']['attributes_origin'];
   $path_destination = $form_state['values']['path_destination'];
   $relationship = $form_state['values']['relationship'];
   $action = $form_state['values']['action'];
-  $mapping = IdsKsMapping::createMappingFromStrings($path_origin, $path_destination, $format_code, $source_code, $attributes_origin, $relationship, $action);
+  $mapping = IdsKsMapping::createMappingFromStrings($path_origin, $path_destination, $format_code, $source_code, $type, $attributes_origin, $relationship, $action);
   if ($mapping->getId()) {
     drupal_set_message(t('Mapping proccessed correctly. <a href="/ids_ks_mapping/ids_ks_mapping/@id">View mapping</a>.', array('@id' => $mapping->getId())));
   }
@@ -1626,6 +1637,7 @@ function idskshub_newmapping_form_submit($form, &$form_state) {
 function idskshub_mappings_form($form, $form_state) {
   $options_formats = array('' => 'All formats') + idskshub_get_formats_codes();
   $options_sources = array('' => 'All sources') + idskshub_get_sources_codes();
+  $options_types = array('' => 'All types') + idskshub_get_types_names();
   $form['mappings_file']['format_code'] = array(
     '#required' => '0',
     '#multiple' => '0',
@@ -1644,6 +1656,15 @@ function idskshub_mappings_form($form, $form_state) {
     '#options' => $options_sources,
     '#title' => t('Source'),
   );
+  $form['mappings_file']['type'] = array(
+    '#required' => '0',
+    '#multiple' => '0',
+    '#description' => t('The item type to apply the mapping to. It is overriden with the type names included the file'),
+    '#weight' => '12',
+    '#type' => 'select',
+    '#options' => $options_types,
+    '#title' => t('Type'),
+  );
   $form['mappings_file']['replace'] = array(
     '#title' => t('Add / replace existing mappings'),
     '#type' => 'radios',
@@ -1658,7 +1679,7 @@ function idskshub_mappings_form($form, $form_state) {
     '#title' => t('Select file'),
     '#description' => 
       t('Upload a comma-separated CSV file with one mapping per row.') . '<br>' .  
-      t('Valid formats: <b>[format_code],[source_code],path_origin,["atr1=val1,at2=val2"],[path_destination],[action],[relationship]</b>. The format and source codes can be left empty for mappings to be applied to all formats/sources.') . '<br>' .
+      t('Valid formats: <b>[format_code],[source_code],[type_name],path_origin,["atr1=val1,at2=val2"],[path_destination],[action],[relationship]</b>. The format and source codes can be left empty for mappings to be applied to all formats/sources.') . '<br>' .
       t('The attributes can be left empty. If there are several pairs of attributes/values, they should be enclosed in double quotes: <b><i>"atr1=val1, atr2=val2"</i></b>') . '<br>' .
       t('Example: <ul><li><i><b>idsxml,,results/list-item/category_region_array/region/list-item,,,RELATED_ITEM,Region of focus</b></i></ul>') . '<br>' .
       t('Please note that this action cannot be undone. <b>Consider <a href="@download_mappings" target="_new">backing up the existing mappings</a> before proceeding</b>.', array('@download_mappings' => 'mappings-export')),
@@ -1688,8 +1709,9 @@ function idskshub_mappings_form_submit($form, &$form_state) {
   $fid = $form_state['values']['file'];
   $format_code = $form_state['values']['format_code'];
   $source_code = $form_state['values']['source_code'];
+  $type = $form_state['values']['type'];
   $replace = $form_state['values']['replace'];
-  IdsKsMapping::createMappingsFile($fid, $format_code, $source_code, $replace);
+  IdsKsMapping::createMappingsFile($fid, $format_code, $source_code, $type, $replace);
 }
 
 // Display links to the elements that are referring a given element of type $type with id $id.

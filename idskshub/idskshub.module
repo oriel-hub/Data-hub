@@ -530,77 +530,81 @@ function idskshub_entity_delete($entity, $entity_type) {
 }
 
 // Apply mappings. TODO: Extend for mappings with actions and no destination path. Consider wildcards.
+// TODO: Check that the item type and mapping type match!!!
 function idskshub_apply_mappings($mappings_ids) {
   $new_mappings = explode(',', $mappings_ids);
   $mappings_applied = array();
+  $message = '';
   if (!empty($new_mappings)) {
     foreach ($new_mappings as $mapping_id) {
       $mapping = new IdsKsMapping();
       $mapping->load($mapping_id);
-      if ($mapping->isSaved() && $mapping->path_origin && $mapping->path_destination && !($mapping->action || $mapping->relationship)) {
-        $mappings_applied[] = $mapping->getLabel();
-        $literals_original_path = IdsKsLiteral::getIds(array('original_path' => $mapping->path_origin));
-        //$versions_origin_ids = IdsKsVersionsLiteral::getIds(array('path' => $mapping->path_origin));
-        $versions_origin_ids = IdsKsVersionsLiteral::getParentsIds(array('literals' => $literals_original_path));
-        $versions_destination_ids = IdsKsVersionsLiteral::getIds(array('path' => $mapping->path_destination));
-        if (!empty($versions_origin_ids)) {
-          foreach ($versions_origin_ids as $versions_origin_id) {
-            //$versions_destination_id = 0;
-            $versions_origin = new IdsKsVersionsLiteral();
-            $versions_origin->load($versions_origin_id);
-            $literals_destination = array();
-            // we can't just change the path because there might be some literals that shouldn't be moved (because the attributes don't match, for instance).
-            foreach ($versions_origin->literals as $literal_origin) {
-              // If the source and path match.
-              if (isset($literal_origin) && ($literal_origin->original_path == $mapping->path_origin) && (empty($mapping->source) || ($mapping->source == $literal_origin->source))) {
-                // we check if the attributes match.
-                $included_attrs_literal = ((empty($literal_origin->attributes) && empty($mapping->attributes_origin)) || !(array_udiff($mapping->attributes_origin, $literal_origin->attributes, 'idskshub_diff')));
-                if ($included_attrs_literal) {
-                  $literals_destination[$literal_origin->getId()] = $literal_origin;
-                }
-              }
-            }
-            // we see if there is already a versions literal with the new path in the item to which this versions literal belongs.
-            if (!empty($literals_destination) && ($items_ids = IdsKsItem::getParentsIds(array('versions_literals' => $versions_origin_id)))) {
-              $item_id = end($items_ids); // Each versions is only one item.
-              // if the 'mapped' versions literal is already in the item, we update it with the literals in the "old" versions literal.
-              $versions_literals_item = IdsKsItem::getChildrenIds($item_id, 'versions_literals');
-              if ($versions_mapped_item_ids = array_intersect($versions_destination_ids, $versions_literals_item)) { // The mapped path exists in the item.
-                $versions_destination_id = end($versions_mapped_item_ids); // There should be only one versions literal for each mapped path in an item.
-                $versions_destination = new IdsKsVersionsLiteral();
-                $versions_destination->load($versions_destination_id);
-                foreach ($literals_destination as $literal) { // Copy the literals to the existing versions.
-                  if (!($versions_destination->inLiterals($literal))) {
-                    $versions_destination->literals[] = $literal;
+      if ($mapping->isSaved() && $mapping->path_origin && $mapping->path_destination) {
+        if (!($mapping->action || $mapping->relationship)) {
+          $mappings_applied[] = $mapping->getLabel();
+          $literals_original_path = IdsKsLiteral::getIds(array('original_path' => $mapping->path_origin));
+          //$versions_origin_ids = IdsKsVersionsLiteral::getIds(array('path' => $mapping->path_origin));
+          $versions_origin_ids = IdsKsVersionsLiteral::getParentsIds(array('literals' => $literals_original_path));
+          $versions_destination_ids = IdsKsVersionsLiteral::getIds(array('path' => $mapping->path_destination));
+          if (!empty($versions_origin_ids)) {
+            foreach ($versions_origin_ids as $versions_origin_id) {
+              //$versions_destination_id = 0;
+              $versions_origin = new IdsKsVersionsLiteral();
+              $versions_origin->load($versions_origin_id);
+              $literals_destination = array();
+              // we can't just change the path because there might be some literals that shouldn't be moved (because the attributes don't match, for instance).
+              foreach ($versions_origin->literals as $literal_origin) {
+                // If the source and path match.
+                if (isset($literal_origin) && ($literal_origin->original_path == $mapping->path_origin) && (empty($mapping->source) || ($mapping->source == $literal_origin->source))) {
+                  // we check if the attributes match.
+                  $included_attrs_literal = ((empty($literal_origin->attributes) && empty($mapping->attributes_origin)) || !(array_udiff($mapping->attributes_origin, $literal_origin->attributes, 'idskshub_diff')));
+                  if ($included_attrs_literal) {
+                    $literals_destination[$literal_origin->getId()] = $literal_origin;
                   }
                 }
-                $versions_destination->save();
-                if (count($versions_origin->literals) == count($literals_destination)) { // If all the literals are copied. There is no need to keep the old one.
-                  $versions_origin->delete(TRUE, FALSE); // We don't delete its literals, as they were moved.
-                }
-                else {
-                  // Some literals were not moved. We have to keep both versions, removing the ones to move from their old place.
-                  $versions_origin->deleteLiteralsByIds(array_keys($literals_destination), FALSE);
-                  $versions_origin->save();
-                }
               }
-              else { // There are no literals with the mapped path.
-                if (count($versions_origin->literals) == count($literals_destination)) {  // All the literals have to be moved.
-                  $versions_origin->path = $mapping->path_destination; // We can just change the path of the existing versions.
-                  $versions_origin->save();
-                }
-                else {
-                  // We have to keep the old one (removing the copied literals). $versions_destination is new.
-                  $versions_origin->deleteLiteralsByIds(array_keys($literals_destination), FALSE);
-                  $versions_origin->save();
+              // we see if there is already a versions literal with the new path in the item to which this versions literal belongs.
+              if (!empty($literals_destination) && ($items_ids = IdsKsItem::getParentsIds(array('versions_literals' => $versions_origin_id)))) {
+                $item_id = end($items_ids); // Each versions is only one item.
+                // if the 'mapped' versions literal is already in the item, we update it with the literals in the "old" versions literal.
+                $versions_literals_item = IdsKsItem::getChildrenIds($item_id, 'versions_literals');
+                if ($versions_mapped_item_ids = array_intersect($versions_destination_ids, $versions_literals_item)) { // The mapped path exists in the item.
+                  $versions_destination_id = end($versions_mapped_item_ids); // There should be only one versions literal for each mapped path in an item.
                   $versions_destination = new IdsKsVersionsLiteral();
-                  $versions_destination->literals = array_values($literals_destination); // Remove NULLs.
-                  $versions_destination->path = $mapping->path_destination;
+                  $versions_destination->load($versions_destination_id);
+                  foreach ($literals_destination as $literal) { // Copy the literals to the existing versions.
+                    if (!($versions_destination->inLiterals($literal))) {
+                      $versions_destination->literals[] = $literal;
+                    }
+                  }
                   $versions_destination->save();
-                  $item = new IdsKsItem();
-                  $item->load($item_id);
-                  $item->versions_literals[] = $versions_destination; // Add new versions to the item.
-                  $item->save();
+                  if (count($versions_origin->literals) == count($literals_destination)) { // If all the literals are copied. There is no need to keep the old one.
+                    $versions_origin->delete(TRUE, FALSE); // We don't delete its literals, as they were moved.
+                  }
+                  else {
+                    // Some literals were not moved. We have to keep both versions, removing the ones to move from their old place.
+                    $versions_origin->deleteLiteralsByIds(array_keys($literals_destination), FALSE);
+                    $versions_origin->save();
+                  }
+                }
+                else { // There are no literals with the mapped path.
+                  if (count($versions_origin->literals) == count($literals_destination)) {  // All the literals have to be moved.
+                    $versions_origin->path = $mapping->path_destination; // We can just change the path of the existing versions.
+                    $versions_origin->save();
+                  }
+                  else {
+                    // We have to keep the old one (removing the copied literals). $versions_destination is new.
+                    $versions_origin->deleteLiteralsByIds(array_keys($literals_destination), FALSE);
+                    $versions_origin->save();
+                    $versions_destination = new IdsKsVersionsLiteral();
+                    $versions_destination->literals = array_values($literals_destination); // Remove NULLs.
+                    $versions_destination->path = $mapping->path_destination;
+                    $versions_destination->save();
+                    $item = new IdsKsItem();
+                    $item->load($item_id);
+                    $item->versions_literals[] = $versions_destination; // Add new versions to the item.
+                    $item->save();
+                  }
                 }
               }
             }

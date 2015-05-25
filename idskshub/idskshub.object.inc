@@ -13,10 +13,6 @@
 
 class IdsKsObject {
 
-  // If the object has not been saved as an entity, it's id = FALSE;
-  public $id = FALSE;
-
-
   // Given an object, its type and the name of a field/property, returns its value.
   public static function factory($entity_type) {
     $classname = self::getClassName($entity_type);
@@ -70,7 +66,7 @@ class IdsKsObject {
   }
 
   // Populates the current object with data from an existing entity (identified by its id or other keys that are already set in the object).
-  public function load($id = FALSE) {
+  public function load($id = 0) {
     if ($id) {
       $this->setId($id);
     }
@@ -245,7 +241,7 @@ class IdsKsObject {
       $id = $entity->identifier();
     }
     else {
-      $id = FALSE;
+      $id = 0;
     }
     $this->setId($id);
     return $id;
@@ -311,7 +307,13 @@ class IdsKsObject {
 
   // Get the id of the current object and the corresponding entity. It's 0 if it still doesn't have an entity associated to it.
   public function getId() {
-    return $this->id;
+    if (isset($this->id)) {
+      $id = $this->id;
+    }
+    else {
+      $id = 0;
+    }
+    return $id;
   }
 
   // Set the id of the current object.

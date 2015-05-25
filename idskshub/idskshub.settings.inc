@@ -10,6 +10,7 @@ define('IDSKS_FROM_EMAIL_ADDRESS', 'IDS Open Knowledge Hub <okhub@ids.ac.uk>');
 define('IDSKS_UNDEFINED_SOURCE_ID', 4);
 define('IDSKS_NUM_ELEMENTS_INTERACTIVE', 500);
 define('IDSKS_HUB_SOURCE_CODE', 'hub');
+define('IDSKS_OKHUB_SOURCE_CODE', 'okhub');
 define('IDSKS_HUB_SOURCE_NAME', 'OKHub');
 define('IDSKS_GENERIC_TYPE_NAME', 'Structure');
 define('IDSKS_DEFAULT_TYPE_ITEMS', 'Document');

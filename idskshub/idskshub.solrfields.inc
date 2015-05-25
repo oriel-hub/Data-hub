@@ -227,7 +227,6 @@ function idskshub_get_solr_hub_fields_definitions() {
                       'hub_item_id' => array('construction' => 'single'), // value to display to the users.
                       'object_id_hub_zz' => array('construction' => 'single'), // value being used internally by the API.
                     ),
-
       ),
     /* Search filters - In general, multi-valued (combined). Can be single-valued */
     /* All searchable fields are also copied into Solr's 'content' field. */
@@ -249,6 +248,11 @@ function idskshub_get_solr_hub_fields_definitions() {
           'keyword_search_hub_zx' => array('construction' => 'combine'),
           'keyword_facet_hub_zx' => array('copy' => 'keyword_search_hub_zx'),
           'content' => array('copy' => 'keyword_search_hub_zx'),
+        ),
+        'keywords' => array(
+          'keywords_search_hub_zx' => array('construction' => 'combine'),
+          'keywords_facet_hub_zx' => array('copy' => 'keywords_search_hub_zx'),
+          'content' => array('copy' => 'keywords_search_hub_zx'),
         ),
         'country_focus' => array(
           'country_focus_search_hub_zx' => array('construction' => 'combine'), 
@@ -274,6 +278,8 @@ function idskshub_get_solr_hub_fields_definitions() {
           'content' => array('copy' => 'category_theme_search_hub_zx'),
         ),
         'object_id' => array('content' => array('construction' => 'combine')),
+        'contributor' => array('contributor_search_hub_en' => array('construction' => 'combine'), 'contributor_facet_hub_en' => array('copy' => 'contributor_search_hub_en')),
+        'acronym' => array('acronym_search_hub_en' => array('construction' => 'combine'), 'acronym_facet_hub_en' => array('copy' => 'acronym_search_hub_en')),
 /*
         'object_id' => array(
           'object_id_search_hub_zz' => array('construction' => 'combine'), 
@@ -300,6 +306,7 @@ function idskshub_get_solr_hub_fields_definitions() {
         'asset_id' => array('asset_id_sort_hub_zz' => array('construction' => 'single')), 
         'publication_date' => array('publication_date_sort_hub_zz' => array('construction' => 'single')), 
         'publication_year' => array('publication_year_sort_hub_zz' => array('construction' => 'single')), 
+        'contributor' => array('contributor_sort_hub_en' => array('construction' => 'single')),
       ),
     );
   return $fields_settings;

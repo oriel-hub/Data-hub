@@ -1004,7 +1004,7 @@ class IdsKsItem extends IdsKsObject {
         $attributes_value = IdsKsAttribute::getAttributesArray($attributes_xml);
         $attributes_value = array_unique(array_merge($attributes_value, $collected_attributes), SORT_REGULAR); // add the parent's attributes that are not in the current element, to use in mappings.
         $new_path_mapped = $xml_path;
-        if ($mapping = IdsKsMapping::getMapping($xml_path, $attributes_value, $format, $source)) {
+        if ($mapping = IdsKsMapping::getMapping($xml_path, $attributes_value, $format, $source, $this->type)) {
           if (isset($mapping->path_destination) && $mapping->path_destination) {
             $new_path_mapped = $mapping->path_destination;
           }
