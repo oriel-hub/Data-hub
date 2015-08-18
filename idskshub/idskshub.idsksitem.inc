@@ -2,13 +2,15 @@
 // $Id$
 
 /**
- * @file
- * IDS KS Item class.
- *
- */
+* @file
+* IDS KS Item class.
+*
+*/
 
 class IdsKsItem extends IdsKsObject {
   public $display_title; // Label of the item to display. Saved for performance.
+  public $is_mapping;
+  public $is_merged;
   public $path; // Only used for untyped subitems (similar to path in the literals).
   public $type;
   public $subitems;
@@ -16,8 +18,6 @@ class IdsKsItem extends IdsKsObject {
   public $root_attributes;
   public $versions_literals;
   public $track_changes;
-  public $is_mapping;
-  public $is_merged;
 
   public static function equal($item1, $item2) {
     $are_equal = FALSE;
@@ -25,7 +25,7 @@ class IdsKsItem extends IdsKsObject {
       $are_equal = TRUE;
     }
     elseif (is_a($item1, 'IdsKsItem') && is_a($item2, 'IdsKsItem')) {
-      if (($item1->path == $item2->path) && ($item1->type == $item2->type)) {
+      if (($item1->get('path') == $item2->get('path')) && ($item1->get('type')->getId() == $item2->get('type')->getId())) {
         $values1 = $item1->getValues();
         $values2 = $item2->getValues();
         $are_equal = ($values1 == $values2);
@@ -46,27 +46,12 @@ class IdsKsItem extends IdsKsObject {
     return $latest_id;
   }
 
-  /* Get the sources from where the item was updated at some point.
-  public function getSourcesFromChanges() {
-    $sources = array();
-    if (!empty($this->track_changes)) {
-      foreach ($this->track_changes as $change) {
-        if (isset($change->source)) {
-          $sources[] = $change->source;
-        }
-      }
-    }
-    $sources = array_unique($sources, SORT_REGULAR);
-    return $sources;
-  }
-  */
-
   // Get the sources from where the item was updated at some point.
   public function getLatestChangeFromSourceCode($source_code) {
     $found_change = NULL;
-    if (!empty($this->track_changes)) {
-      foreach (array_reverse($this->track_changes) as $change) {
-        if (isset($change->source) && $source_code == $change->source->code) {
+    if ($this->get('track_changes')) {
+      foreach (array_reverse($this->get('track_changes')) as $change) {
+        if ($change->get('source') && $source_code == $change->get('source')->get('code')) {
           $found_change = $change;
           break;
         }
@@ -78,12 +63,12 @@ class IdsKsItem extends IdsKsObject {
   // Get the sources currently present in the item.
   public function getSourcesFromValues() {
     $sources = array();
-    if (isset($this->versions_literals)) {
-      foreach ($this->versions_literals as $versions_literals) {
-        if (isset($versions_literals->literals)) {
-          foreach ($versions_literals->literals as $literal) {
-            if (isset($literal->source)) {
-              $sources[] = $literal->source;
+    if ($this->get('versions_literals')) {
+      foreach ($this->get('versions_literals') as $versions_literals) {
+        if ($versions_literals && $versions_literals->get('literals')) {
+          foreach ($versions_literals->get('literals') as $literal) {
+            if ($literal && $literal->get('source')) {
+              $sources[] = $literal->get('source');
             }
           }
         }
@@ -96,11 +81,11 @@ class IdsKsItem extends IdsKsObject {
   // Checks if an item has some content from a source based on its values, without having to check all the values.
   public function hasContentFromSource($source_id) {
     $found = FALSE;
-    if (isset($this->versions_literals)) {
-      foreach ($this->versions_literals as $versions_literals) {
-        if (isset($versions_literals->literals)) {
-          foreach ($versions_literals->literals as $literal) {
-            if (isset($literal->source) && ($literal->source->getId() == $source_id)) {
+    if ($this->get('versions_literals')) {
+      foreach ($this->get('versions_literals') as $versions_literals) {
+        if ($versions_literals->get('literals')) {
+          foreach ($versions_literals->get('literals') as $literal) {
+            if ($literal && $literal->get('source') && $literal->get('source')->getId() == $source_id) {
               $found = TRUE;
               break 2;
             }
@@ -115,18 +100,19 @@ class IdsKsItem extends IdsKsObject {
   public function setItemType($source, $feed, $type_name) {
     $type = NULL;
     if ($type_name == 'data') {
-      if (isset($feed->default_format)) {
-        $format = $feed->default_format;
+      if ($feed->get('default_format')) {
+        $format = $feed->get('default_format');
       }
       if ($format) {
-        if (isset($format->type_path) && $format->type_path) {
-          if ($versions = $this->retrieveVersionsLiteralPath($format->type_path)) {
+        if ($format->get('type_path')) {
+          if ($versions = $this->retrieveVersionsLiteralPath($format->get('type_path'))) {
             $literals = $versions->getLiteralVersionsSource($source);
             if (!empty($literals)) { // get the first value available from the source.
-              $type_name = $literals[0]->value;
+              $type_name = $literals[0]->get('value');
             }
-            elseif (!empty($versions->literals)) { // get the first value available from any source.
-              $type_name = $versions->literals[0]->value;
+            elseif ($versions->get('literals')) { // get the first value available from any source.
+              $first = array_shift($versions->get('literals'));
+              $type_name = $first->get('value');
             }
             else {
               trigger_error(t('The path defined in the file format to retrieve the item\'s type is not valid. Using the feed\'s default type.'));
@@ -144,22 +130,22 @@ class IdsKsItem extends IdsKsObject {
       }
     }
     if ($type_name == 'feed') {
-      if (isset($feed->default_type)) {
-        $type = $feed->default_type;
+      if ($feed->get('default_type')) {
+        $type = $feed->get('default_type');
       }
     }
     if (!isset($type)) { // Was not found and could not be retrieved from the source or feed.
       $type = new IdsKsType();
-      $type->name = $type_name;
+      $type->set('name', $type_name);
       $type->load();
     }
     if (isset($type) && !$type->getId()) {
       trigger_error(t('The item type does not exist. Using the default type: @default.', array('@default' => IDSKS_DEFAULT_TYPE_ITEMS)));
-      $type->name = IDSKS_DEFAULT_TYPE_ITEMS;
+      $type->set('name', IDSKS_DEFAULT_TYPE_ITEMS);
       $type->load();
     }
     if (isset($type) && $type->getId()) {
-      $this->type = $type;
+      $this->set('type', $type);
     }
     else {
       trigger_error(t('The item type could not be assigned.'));
@@ -178,12 +164,12 @@ class IdsKsItem extends IdsKsObject {
           if ($path_prefix) {
             $attr_name = '[' . $path_prefix . ']:' . $attr_name;
           }
-          if (isset($source->code)) {
-            $attr_name = '[' . $source->code . ']:' . $attr_name;
+          if ($source->get('code')) {
+            $attr_name = '[' . $source->get('code') . ']:' . $attr_name;
           }
           $new_attribute = IdsKsAttribute::getAttribute($attr_name, $attr_value);
-          if (empty($this->root_attributes) || !in_array($new_attribute, $this->root_attributes)) {
-            $this->root_attributes[] = $new_attribute;
+          if (!$this->get('root_attributes') || array_udiff($this->get('root_attributes'), array($new_attribute), 'idskshub_diff')) {
+            $this->add('root_attributes', $new_attribute);
           }
         }
       }
@@ -193,10 +179,14 @@ class IdsKsItem extends IdsKsObject {
   // Returns an array with the value of each literal indexed by path and source id.
   public function getValues() {
     $values = array();
-    foreach ($this->versions_literals as $versions_literals) {
-      foreach ($versions_literals->literals as $literal) {
-        $source_id = $literal->source->getId();
-        $values[$versions_literals->path][$source_id][] = $literal->value;
+    foreach ($this->get('versions_literals') as $versions_literals) {
+      if ($versions_literals) {
+        foreach ($versions_literals->get('literals') as $literal) {
+          if ($literal) {
+            $source_id = $literal->get('source')->getId();
+            $values[$versions_literals->get('path')][$source_id][] = $literal->get('value');
+          }
+        }
       }
     }
     return $values;
@@ -205,11 +195,30 @@ class IdsKsItem extends IdsKsObject {
   // Returns an array with the value of each literal indexed by source code and path.
   public function getValuesBySource() {
     $values = array();
-    foreach ($this->versions_literals as $versions_literals) {
-      foreach ($versions_literals->literals as $literal) {
-        if (isset($literal->source)) {
-          if ($source_code = $literal->source->code) {
-            $values[$source_code][$versions_literals->path][] = $literal->value;
+    foreach ($this->get('versions_literals') as $versions_literals) {
+      if ($versions_literals) {
+        foreach ($versions_literals->get('literals') as $literal) {
+          if ($literal && $literal->get('source')) {
+            if ($source_code = $literal->get('source')->get('code')) {
+              $values[$source_code][$versions_literals->get('path')][] = $literal->get('value');
+            }
+          }
+        }
+      }
+    }
+    return $values;
+  }
+
+  // Returns an array with the literals indexed by source code and versions literals id.
+  public function getLiteralsBySource() {
+    $values = array();
+    foreach ($this->get('versions_literals') as $versions_literals) {
+      if ($versions_literals) {
+        foreach ($versions_literals->get('literals') as $literal) {
+          if ($literal && $literal->get('source')) {
+            if ($source_code = $literal->get('source')->get('code')) {
+              $values[$source_code][$versions_literals->getId()][] = $literal;
+            }
           }
         }
       }
@@ -255,10 +264,10 @@ class IdsKsItem extends IdsKsObject {
   public function getDisplayFieldValues($field, $source_code='') {
     $values = array();
     $field_paths = $field . '_paths';
-    if (isset($this->type)) {
-      $type = $this->type;
-      if (!empty($type->{$field_paths})) {
-        $paths = $type->{$field_paths};
+    if ($this->get('type')) {
+      $type = $this->get('type');
+      if ($type->get($field_paths)) {
+        $paths = $type->get($field_paths);
         foreach ($paths as $path) {
           $values[$path] = $this->getPathValues($path, $source_code);
         }
@@ -272,32 +281,32 @@ class IdsKsItem extends IdsKsObject {
     $values = array();
     $root_languages = $this->getRootLanguages();
     $versions = $this->retrieveVersionsLiteralPath($path);
-    if (!empty($versions) && isset($versions->literals)) {
-      foreach ($versions->literals as $literal) {
+    if (!empty($versions) && $versions->get('literals')) {
+      foreach ($versions->get('literals') as $literal) {
         $language = '';
-        if (isset($literal->source)) {
-          if (!$source_code || ($literal->source->code == $source_code)) {
-            $source = $literal->source;
-            if (isset($literal->attributes)) {
-              foreach ($literal->attributes as $attribute) {
-                if ($attribute->name == IDSKS_LANGUAGE_ATTRIBUTE) {
-                  $language = $attribute->value;
+        if ($literal && $literal->get('source')) {
+          if (!$source_code || ($literal->get('source')->get('code') == $source_code)) {
+            $source = $literal->get('source');
+            if ($literal->get('attributes')) {
+              foreach ($literal->get('attributes') as $attribute) {
+                if ($attribute->get('name') == IDSKS_LANGUAGE_ATTRIBUTE) {
+                  $language = $attribute->get('value');
                 }
                 break;
               }
             }
             if (!$language) {
-              if (isset($root_languages[$literal->source->code])) {
-                $language = $root_languages[$literal->source->code];
+              if (isset($root_languages[$literal->get('source')->get('code')])) {
+                $language = $root_languages[$literal->get('source')->get('code')];
               }
-              elseif (isset($source->default_language)) {
-                $language = $source->default_language;
+              elseif ($source->get('default_language')) {
+                $language = $source->get('default_language');
               }
               else {
                 $language = IDSKS_UNDEFINED_LANGUAGE;
               }
             }
-            $values[$language][$source->code][] = $literal->value;
+            $values[$language][$source->get('code')][] = $literal->get('value');
           }
         }
       }
@@ -314,11 +323,11 @@ class IdsKsItem extends IdsKsObject {
     else {
       $language_codes_regexp = '/([a-z]){2}/';
     }
-    if (isset($this->root_attributes)) {
-      foreach ($this->root_attributes as $attribute) {
-        if (preg_match('/\[(\w+)\]:'.IDSKS_LANGUAGE_ATTRIBUTE.'/', $attribute->name, $matches)) {
+    if ($this->get('root_attributes')) {
+      foreach ($this->get('root_attributes') as $attribute) {
+        if ($attribute && $attribute->get('name') && preg_match('/\[(\w+)\]:'.IDSKS_LANGUAGE_ATTRIBUTE.'/', $attribute->get('name'), $matches)) {
           $source_code = $matches[1];
-          if (preg_match($language_codes_regexp, $attribute->value, $matches)) {
+          if (preg_match($language_codes_regexp, $attribute->get('value'), $matches)) {
             $metadata_languages[$source_code] = $matches[0];
           }
         }
@@ -327,20 +336,46 @@ class IdsKsItem extends IdsKsObject {
     return $metadata_languages;
   }
 
+  // Returns root attributes indexed by source.
+  public function getRootAttributesBySource() {
+    $root_attributes = array();
+    if ($this->get('root_attributes')) {
+      foreach ($this->get('root_attributes') as $attribute) {
+        if ($attribute && $attribute->get('name') && preg_match('/\[(\w+)\]:/', $attribute->get('name'), $matches)) {
+          $source_code = $matches[1];
+          $root_attributes[$source_code][] = $attribute;
+        }
+      }
+    }
+    return $root_attributes;
+  }
+
+  public function setDisplayTitle() {
+    if (!$display_title = $this->getDisplayFieldValue('title')) {
+      if ($this->get('type') && $this->get('type')->get('name')) {
+        $display_title = $this->get('type')->get('name');
+      }
+      if ($this->getId()) {
+        $display_title .= ' ' . $this->getId();
+      }
+    }
+    $this->set('display_title', html_entity_decode($display_title, ENT_COMPAT, "UTF-8"));
+  }
+
   public function getGlobalLanguage($source) {
     $language = FALSE;
-    $metadata_languages = idskshub_flatten_array($this->getPathValues(IDSKS_LANGUAGES_FIELD, $source->code));
+    $metadata_languages = idskshub_flatten_array($this->getPathValues(IDSKS_LANGUAGES_FIELD, $source->get('code')));
     if (count($metadata_languages) == 1) {
       $language = $metadata_languages[0];
     }
     else {
       $root_languages = $this->getRootLanguages();
-      if (isset($root_languages[$source->code])) {
-        $language = $root_languages[$source->code];
+      if (isset($root_languages[$source->get('code')])) {
+        $language = $root_languages[$source->get('code')];
       }
       else {
-        if (isset($source->default_language)) {
-          $language = $source->default_language;
+        if ($source->get('default_language')) {
+          $language = $source->get('default_language');
         }
       }
     }
@@ -348,24 +383,61 @@ class IdsKsItem extends IdsKsObject {
   }
 
   public function save() {
-    if (empty($this->is_mapping)) {
-      $this->is_mapping = 0;
+    if (!$this->get('is_mapping')) {
+      $this->set('is_mapping', 0);
     }
-    if (empty($this->is_merged)) {
-      $this->is_merged = 0;
+    if (!$this->get('is_merged')) {
+      $this->set('is_merged', 0);
     }
     parent::save();
+  }
+
+  public function getRelItemsIds() {
+    $rel_items_ids = array();
+    foreach ($this->get('related_items') as $rel_item) {
+      if ($rel_item && $rel_item->get('referred_item') && $rel_item->get('source') && $rel_item->get('relationship') && ($source_code = $rel_item->get('source')->get('code')) && ($relationship_code = $rel_item->get('relationship')->get('code'))) {
+        $rel_items_ids[$relationship_code][$source_code][] = $rel_item->get('referred_item')->getId();
+      }
+    }
+    return $rel_items_ids;
+  }
+
+  public function getRelItemsTitles() {
+    $rel_items_ids = array();
+    foreach ($this->get('related_items') as $rel_item) {
+      if ($rel_item->get('referred_item') && $rel_item->get('source') && $rel_item->get('relationship') && ($source_code = $rel_item->get('source')->get('code')) && ($relationship_code = $rel_item->get('relationship')->get('code')) && ($display_title = $rel_item->get('referred_item')->get('display_title'))) {
+        $rel_items_ids[$relationship_code][$source_code][] = $display_title;
+      }
+    }
+    return $rel_items_ids;
+  }
+
+  // Indicates if the item is a top-level element in all hierarchies of items of its type.
+  public function isTopLevel($source_code = '') {
+    $top_level = TRUE;
+    if ($this->get('type') && ($type = $this->get('type')->get('name'))) {
+      $parent_rel_code = 'parent_' . strtolower($type);
+      $rel_items = $this->getRelItemsIds();
+      if ($source_code) { // is top-level in this source's hierarchy
+        $top_level = !isset($rel_items[$parent_rel_code][$source_code]);
+      }
+      else { // in all hierarchies
+        $top_level = !isset($rel_items[$parent_rel_code]);
+      }
+    }
+    return $top_level;
   }
 
   // Save the item with its literals and the track_changes, cleaning up empty literal versions container.
   // Assumes that each referred subitem and related_item has already been saved.
   public function saveItem($save_literals = TRUE, $reindex_parents = TRUE) {
-    if (!($this->isEmptyItem())) {
-      if (!empty($this->versions_literals)) {
-        foreach ($this->versions_literals as $key => $versions_literal) {
-          if (!empty($versions_literal->literals)) {
+    if (!$this->isEmptyItem()) {
+      if ($this->get('versions_literals')) {
+        $versions_literals = $this->get('versions_literals');
+        foreach ($versions_literals as $key => $versions_literal) {
+          if ($versions_literal && $versions_literal->get('literals')) {
             if ($save_literals) {
-              foreach ($versions_literal->literals as $literal) {
+              foreach ($versions_literal->get('literals') as $literal) {
                 if ($literal) {
                   $literal->save();
                 }
@@ -376,25 +448,20 @@ class IdsKsItem extends IdsKsObject {
             }
           }
           else {
-            unset($this->versions_literals[$key]);
+            unset($versions_literals[$key]);
           }
         }
-        $this->versions_literals = array_values(array_filter($this->versions_literals));
+        $this->set('versions_literals', array_values(array_filter($versions_literals)));
       }
-      if (isset($this->track_changes)) {
-        $track_changes = end($this->track_changes);
-        if ($track_changes) { 
-          if (!($track_changes->getId())) { // If the most recent changes are not saved, we save it.
-            $track_changes->save();
-          }
-        }
+      if ($this->get('track_changes') && ($track_changes = end($this->get('track_changes'))) && !$track_changes->isSaved()) { // If the most recent changes are not saved, we save it.
+        $track_changes->save();
       }
       $this->save();
       if ($reindex_parents) {
         $parents_ids = array();
-        $referring_related_items_ids = IdsKsRelatedItem::getParentsIds(array('referred_item' => $this->getId()));
+        $referring_related_items_ids = IdsKsRelatedItem::getIds(array('referred_item' => $this->getId()));
         foreach ($referring_related_items_ids as $referring_related_item_id) {
-          $referring_items_ids = IdsKsItem::getParentsIds(array('related_items' => $referring_related_item_id));
+          $referring_items_ids = IdsKsItem::getIds(array('related_items' => $referring_related_item_id));
           $parents_ids = array_merge($parents_ids, $referring_items_ids);
         }
         IdsKsItem::markToIndex($parents_ids);
@@ -427,30 +494,30 @@ class IdsKsItem extends IdsKsObject {
   // Delete an item with its literals and removes it from its "parents" subitems lists.
   public function delete($delete_elements = TRUE, $delete_from_referring = TRUE) {
     if ($delete_elements) {
-      if (!empty($this->versions_literals)) {
-        foreach ($this->versions_literals as $versions_literal) {
+      if ($this->get('versions_literals')) {
+        foreach ($this->get('versions_literals') as $versions_literal) {
           if ($versions_literal) {
             IdsKsVersionsLiteral::deleteVersionsLiteral($versions_literal->getId(), FALSE);
           }
         }
       }
-      if (!empty($this->track_changes)) {
-        foreach ($this->track_changes as $changes) {
+      if ($this->get('track_changes')) {
+        foreach ($this->get('track_changes') as $changes) {
           if ($changes) {
             $changes->delete();
           }
         }
       }
-      if (!empty($this->related_items)) {
-        foreach ($this->related_items as $related_item) {
-          if (isset($related_item)) {
+      if ($this->get('related_items')) {
+        foreach ($this->get('related_items') as $related_item) {
+          if ($related_item) {
             $related_item->delete();
           }
         }
       }
-      if (!empty($this->subitems)) {
-        foreach ($this->subitems as $subitem) {
-          if (isset($subitem) && !$subitem->isTypedItem()) {
+      if ($this->get('subitems')) {
+        foreach ($this->get('subitems') as $subitem) {
+          if ($subitem && !$subitem->isTypedItem()) {
             $subitem->delete(TRUE);
           }
         }
@@ -458,60 +525,49 @@ class IdsKsItem extends IdsKsObject {
     }
     if ($delete_from_referring) { // FALSE when the parent will be deleted anyway (see merge).
       // Delete from referring items via 'related_items'.
-      $referring_related_items_ids = IdsKsRelatedItem::getParentsIds(array('referred_item' => $this->getId()));
+      $referring_related_items_ids = IdsKsRelatedItem::getIds(array('referred_item' => $this->getId()));
       foreach ($referring_related_items_ids as $referring_related_item_id) {
-        $referring_items_ids = IdsKsItem::getParentsIds(array('related_items' => $referring_related_item_id));
+        $referring_items_ids = IdsKsItem::getIds(array('related_items' => $referring_related_item_id));
         foreach ($referring_items_ids as $referring_item_id) { // There should be only one.
           $referring_item = new IdsKsItem();
           $referring_item->load($referring_item_id);
           $related_items = array();
-          foreach ($referring_item->related_items as $related_item) {
-            if ($related_item->referred_item->getId() <> $this->getId()) {
-              $related_items[] = $related_item;
-            }
-            else {
-              $related_item->delete();
+          foreach ($referring_item->get('related_items') as $related_item) {
+            if ($related_item) {
+              if ($related_item->get('referred_item') && $related_item->get('referred_item')->getId() <> $this->getId()) {
+                $related_items[] = $related_item;
+              }
+              else {
+                $related_item->delete();
+              }
             }
           }
-          $referring_item->related_items = $related_items;
+          $referring_item->set('related_items', $related_items);
           $referring_item->save();        
         }
       }
       // Delete from referring items via 'subitems'.
-      $parent_items_ids = IdsKsItem::getParentsIds(array('subitems' => $this->getId()));
+      $parent_items_ids = IdsKsItem::getIds(array('subitems' => $this->getId()));
       foreach ($parent_items_ids as $parent_id) {
         $parent = new IdsKsItem();
         $parent->load($parent_id);
         $subitems = array();
-        foreach ($parent->subitems as $child) {
-          if ($child->getId() <> $this->getId()) {
+        foreach ($parent->get('subitems') as $child) {
+          if ($child && $child->getId() <> $this->getId()) {
             $subitems[] = $child;
           }
         }
-        $parent->subitems = $subitems;
+        $parent->set('subitems', $subitems);
         $parent->save();
       }
     }
     parent::delete();
   }
 
-/*
-  public function removeVersionsLiteralById($versions_id) {
-    $new_versions_literals = array();
-    foreach ($this->versions_literals as $versions) {
-      if ($versions_id != $versions->getId()) {
-        $new_versions_literals[] = $versions;
-      }
-    }
-    $this->versions_literals = $new_versions_literals;
-    $this->save();
-  }
-*/
-
   // Save 'untyped' subitems, which have not been saved in the process of populating the temporary item.
   public function saveSubitems() { 
-    if (!empty($this->subitems)) { // it's not null.
-      foreach ($this->subitems as $subitem) {
+    if ($this->get('subitems')) {
+      foreach ($this->get('subitems') as $subitem) {
         if (!$subitem->isTypedItem()) {
           $subitem->saveSubitems();
           $subitem->saveItem(TRUE, FALSE);
@@ -522,8 +578,8 @@ class IdsKsItem extends IdsKsObject {
 
   // Save links to related items that have not been saved.
   public function saveRelatedItems() { 
-    if (!empty($this->related_items)) { // it's not null.
-      foreach ($this->related_items as $related_item) {
+    if ($this->get('related_items')) {
+      foreach ($this->get('related_items') as $related_item) {
         $related_item->save();
       }
     }
@@ -531,10 +587,10 @@ class IdsKsItem extends IdsKsObject {
 
   // Return TRUE if the item does not have literals.
   public function isEmptyItem() {
-    if (!$empty = empty($this->versions_literals)) {
+    if ($empty = !$this->get('versions_literals')) {
       $empty = TRUE;
-      foreach ($this->versions_literals as $versions_literal) {
-        if(!empty($versions_literal) && !($versions_literal->isEmptyVersions())) {
+      foreach ($this->get('versions_literals') as $versions_literal) {
+        if($versions_literal && !($versions_literal->isEmptyVersions())) {
           $empty = FALSE;
           break;
         }
@@ -556,95 +612,312 @@ class IdsKsItem extends IdsKsObject {
 
   public function addChanges($source, $raw_data='', $hash=0) {
     $track_changes = new IdsKsTrackChanges();
-    $track_changes->source = $source;
-    $track_changes->timestamp = time();
+    $track_changes->set('source', $source);
+    $track_changes->set('timestamp', time());
     if ($raw_data) {
-      //$track_changes->raw_data = idskshub_restore_namespace($raw_data);
-      $track_changes->raw_data = $raw_data;
+      $track_changes->set('raw_data', $raw_data);
       if ($hash) {
-        $track_changes->hash = $hash;
+        $track_changes->set('hash', $hash);
       }
       else {
-        $track_changes->hash = IdsKsTrackChanges::newHash($raw_data);
+        $track_changes->set('hash', IdsKsTrackChanges::newHash($raw_data));
       }
     }
-    $this->track_changes[] = $track_changes;
+    $this->add('track_changes', $track_changes);
   }
-  
+
+  // Splits a merged item, generating one item for each source.
+  public function splitBySources() {
+    $semantic_codes = array_keys(idskshub_get_semantic_services());
+    // Get "same as" relationship based on current item's type.
+    $same_as_rel = new IdsKsRelationship;
+    if ($this->get('type') && $this->get('type')->get('name')) {
+      $same_as_rel->set('code', 'same_as_' . strtolower($this->get('type')->get('name')));
+      $same_as_rel->load();
+    }
+    // Get source corresponding to the OKHub;
+    $okhub_source = new IdsKsSource;
+    $okhub_source->set('code', IDSKS_OKHUB_SOURCE_CODE);
+    $okhub_source->load();
+    $vals = $this->getLiteralsBySource();
+    $root_attrs = $this->getRootAttributesBySource();
+    $new_vers_literals = array();
+    $new_items = array();
+    array_multisort(array_map('count', $vals), SORT_DESC, $vals);
+    $first_source_code = key($vals);
+    $first_source_values = array_shift($vals);
+    if (count(array_keys($vals)) > 0) { // There are literals' values for more than one source
+      foreach ($vals as $source_code => $vers_lits) {
+        if (!in_array($source_code, $semantic_codes) && $source_code != IDSKS_OKHUB_SOURCE_CODE) { // Skip sources that are semantic services (are left in the original item).
+          foreach ($vers_lits as $vers_lit_id => $literals)  {
+            $new_vers_literal = new IdsKsVersionsLiteral;
+            if (!isset($old_vers_literals[$vers_lit_id])) {
+              $old_vers_literals[$vers_lit_id] = new IdsKsVersionsLiteral;
+              $old_vers_literals[$vers_lit_id]->load($vers_lit_id);
+            }
+            if ($old_vers_literals[$vers_lit_id]->get('path')) {
+              $new_vers_literal->set('path', $old_vers_literals[$vers_lit_id]->get('path'));
+            }
+            foreach ($literals as $literal) {
+              $new_vers_literal->add('literals', $literal);
+            }
+            if (!$new_vers_literal->isEmptyVersions()) {
+              $new_vers_literal->save();
+              $new_vers_literals[$source_code][] = $new_vers_literal;
+            }
+          }
+        }
+      }
+    }
+    // Split related items by source.
+    if ($related_items = $this->get('related_items')) {
+      foreach ($related_items as $related_item) {
+        if ($related_item && $related_item->get('source') && $related_item->get('source')->get('code')) {
+          $source_code = $related_item->get('source')->get('code');
+          if ($source_code == IDSKS_OKHUB_SOURCE_CODE) { // If the source is IDSKS_OKHUB_SOURCE_CODE we keep it in the original item.
+            $source_code = $first_source_code;
+          }
+          $new_rel_items[$source_code][] = $related_item;
+        }
+      }
+    }
+    // Split subitems by source.
+    if ($subitems = $this->get('subitems')) {
+      foreach ($subitems as $subitem) {
+        if ($sources_subitem = idskshub_get_item_sources_codes($subitem->getId())) {
+          $source_code = array_shift($sources_subitem); // Subitems have only one source.
+          if ($source_code == IDSKS_OKHUB_SOURCE_CODE) { // If the source is IDSKS_OKHUB_SOURCE_CODE we keep it in the original item.
+            $source_code = $first_source_code;
+          }
+          $new_subitems[$source_code][] = $subitem;
+        }
+      }
+    }
+    // Split track changes by source.
+    if ($track_changes = $this->get('track_changes')) {
+      foreach ($track_changes as $track_change) {
+        if ($track_change && $track_change->get('source') && $track_change->get('source')->get('code')) {
+          $source_code = $track_change->get('source')->get('code');
+          $new_track_changes[$source_code][] = $track_change;
+        }
+      }
+    }
+    foreach ($new_vers_literals as $source_code => $new_vers_literals_source) { // If there are values for more than one source, create new items.
+      $new_items[$source_code] = new IdsKsItem;
+      $new_items[$source_code]->set('type', $this->get('type'));
+      $new_items[$source_code]->set('versions_literals', $new_vers_literals_source);
+      if (isset($new_track_changes[$source_code])) {
+        $new_items[$source_code]->set('track_changes', $new_track_changes[$source_code]);
+      }
+      if (isset($root_attrs[$source_code])) {
+        $new_items[$source_code]->set('root_attributes', $root_attrs[$source_code]);
+      }   
+      if (isset($new_subitems[$source_code])) {
+        $new_items[$source_code]->set('subitems', $new_subitems[$source_code]);
+      }
+      // Set display title of new item (based on its type, literals and language)
+      $new_items[$source_code]->setDisplayTitle();
+      // First save, in order to get an id.
+      $new_items[$source_code]->save();
+    }
+    // For each new item, add links to the other new items just created and the current item and save them.
+    foreach ($new_items as $source_code1 => $new_item1) {
+      // Add cross-references between new items.
+      foreach ($new_items as $source_code2 => $new_item2) {
+        if ($source_code1 != $source_code2 && $new_items[$source_code2]->getId() && $same_as_rel->getId() && $okhub_source->getId()) {
+          $new_rel_item = new IdsKsRelatedItem;
+          $new_rel_item->set('referred_item', $new_items[$source_code2]);
+          $new_rel_item->set('relationship', $same_as_rel);
+          $new_rel_item->set('source', $okhub_source);
+          $new_rel_item->save();
+          $new_rel_items[$source_code1][] = $new_rel_item;
+        }
+      }
+      // Add "same as" links between the new items and the current item.
+      if ($same_as_rel->getId() && $okhub_source->getId()) {
+        $new_rel_item = new IdsKsRelatedItem;
+        $new_rel_item->set('referred_item', $this);        
+        $new_rel_item->set('relationship', $same_as_rel);
+        $new_rel_item->set('source', $okhub_source);
+        $new_rel_item->save();
+        $new_rel_items[$source_code1][] = $new_rel_item;
+      }
+      if (isset($new_rel_items[$source_code1])) {
+        $new_items[$source_code1]->set('related_items', $new_rel_items[$source_code1]);
+      }
+      // Update new items' related items.
+      $new_items[$source_code1]->save();
+      // Add "links" from current item to new items.
+      if ($new_items[$source_code1]->getId() && $same_as_rel->getId() && $okhub_source->getId()) {
+        $new_rel_item = new IdsKsRelatedItem;
+        $new_rel_item->set('referred_item', $new_items[$source_code1]);
+        $new_rel_item->set('relationship', $same_as_rel);
+        $new_rel_item->set('source', $okhub_source);
+        $new_rel_item->save();
+        $new_rel_items[$first_source_code][] = $new_rel_item;
+      }
+    }
+    if (!empty($new_items)) {
+      // Remove literals / versions literals.
+      if ($this->get('versions_literals')) {
+        $first_source_versions_literals = $this->get('versions_literals');
+        foreach ($first_source_versions_literals as $pos => $vers_lit) {
+          if ($vers_lit->get('literals')) {
+            $keep_literals = array();
+            foreach ($vers_lit->get('literals') as $old_literal) {
+              if ($old_literal && $old_literal->get('source') && ($old_literal->get('source')->get('code') == $first_source_code || in_array($old_literal->get('source')->get('code'), $semantic_codes) || $old_literal->get('source')->get('code') == IDSKS_OKHUB_SOURCE_CODE)) {
+                $keep_literals[] = $old_literal;
+              }
+            }
+            if (!empty($keep_literals)) {
+              $vers_lit->set('literals', $keep_literals);
+              $vers_lit->save();
+            }
+            else {
+              unset($first_source_versions_literals[$pos]);
+              $vers_lit->delete(FALSE, FALSE);
+            }
+          }
+        }
+        $this->set('versions_literals', array_values(array_filter($first_source_versions_literals)));
+      }
+      // Change referring items.
+      $referring_related_items_ids = IdsKsRelatedItem::getIds(array('referred_item' => $this->getId()));
+      foreach ($referring_related_items_ids as $referring_related_item_id) {
+        $referring_items_ids = IdsKsItem::getIds(array('related_items' => $referring_related_item_id));
+        foreach ($referring_items_ids as $referring_item_id) { // There should be only one.
+          $rel_item = new IdsKsRelatedItem();
+          $rel_item->load($referring_related_item_id);
+          $source_code_rel_item = $rel_item->get('source')->get('code');
+          if (isset($new_items[$source_code_rel_item])) {
+            $rel_item->set('referred_item', $new_items[$source_code_rel_item]);
+            $rel_item->save();
+          }
+        }
+      }
+      $this->setDisplayTitle();
+      if (isset($root_attrs[$first_source_code])) { // Remove other sources' root attributes.
+        $this->set('root_attributes', $root_attrs[$first_source_code]);
+      }
+      else {
+        $this->set('root_attributes', array());
+      }
+      if (isset($new_rel_items[$first_source_code])) { // Remove other sources' related items.
+        $this->set('related_items', $new_rel_items[$first_source_code]);
+      }
+      else {
+        $this->set('related_items', array());
+      }
+      if (isset($new_subitems[$first_source_code])) { // Remove other sources' subitems.
+        $this->set('subitems', $new_subitems[$first_source_code]);
+      }
+      else {
+        $this->set('subitems', array());
+      }
+      if (isset($new_track_changes[$first_source_code])) { // Remove other sources' track changes.
+        $this->set('track_changes', $new_track_changes[$first_source_code]);
+      }
+      else {
+        $this->set('track_changes', array());
+      }
+      $this->saveItem();
+    }
+  }
+
   // Merge two *saved* items of the same type.
   public static function mergeItems($item1, $item2) {
-    debug('Merging items...');
-    debug($item1, 'item1');
-    debug($item2, 'item2');
     $merged_item_id = 0;
     if ($item1->isSaved() && $item2->isSaved()) {
-      if ($item1->getId() <> $item2->getId()) {
-        if ($item1->type->getId() == $item2->type->getId()) { // Only merge items if they have the same type.
-          if (IdsKsItem::equal($item1, $item2) && !empty($item2->versions_literals)) {
-            $item2->versions_literals->delete(FALSE, TRUE);
+      if ($item1->getId() <> $item2->getId()) { // It's not the same item.
+        if ($item1->get('type')->getId() == $item2->get('type')->getId()) { // Only merge items if they have the same type.
+          if (IdsKsItem::equal($item1, $item2) && $item2->get('versions_literals')) {
+            foreach ($item2->get('versions_literals') as $versions_literal2) {
+              if ($versions_literal2) {
+                $versions_literal2->delete(FALSE, TRUE);
+              }
+            }
           }
-          elseif (!empty($item2->versions_literals)) {
-            foreach ($item2->versions_literals as $versions_literal2) {
-              $versions_literal1 = $item1->getVersionsLiteralPath($versions_literal2->path);
-              if ($versions_literal1->getId()) { // there are literals with this path in item1.
-                foreach ($versions_literal2->literals as $literal2) {
-                  if (isset($literal2->source)) {
-                    $literals_path_source1 = $versions_literal1->getLiteralVersionsSource($literal2->source);
-                    $versions_literal1->addLiteralValue($literal2, $literals_path_source1, 'allow_multiple');
+          elseif ($item2->get('versions_literals')) {
+            foreach ($item2->get('versions_literals') as $versions_literal2) {
+              if ($versions_literal2) {
+                $versions_literal1 = $item1->getVersionsLiteralPath($versions_literal2->get('path'));
+                if ($versions_literal1 && $versions_literal1->getId()) { // there are literals with this path in item1.
+                  foreach ($versions_literal2->get('literals') as $literal2) {
+                    if ($literal2 && $literal2->get('source')) {
+                      $literals_path_source1 = $versions_literal1->getLiteralVersionsSource($literal2->get('source'));
+                      $versions_literal1->addLiteralValue($literal2, $literals_path_source1, 'allow_multiple');
+                    }
                   }
+                } 
+                else {
+                  $item1->add('versions_literals', $versions_literal2);
                 }
-              } 
-              else {
-                $item1->versions_literals[] = $versions_literal2;          
               }
             }
           }          
-          if ($display_title = $item1->getDisplayFieldValue('title')) {
-            $item1->display_title = $display_title;
-          }
-          $item1->track_changes = is_array($item1->track_changes) ? $item1->track_changes : array();
-          $item2->track_changes = is_array($item2->track_changes) ? $item2->track_changes : array();
-          $item1->track_changes = array_merge($item1->track_changes, $item2->track_changes);
-          foreach ($item2->subitems as $subitem2) {
+          $item1->set('track_changes', is_array($item1->get('track_changes')) ? $item1->get('track_changes') : array());
+          $item2->set('track_changes', is_array($item2->get('track_changes')) ? $item2->get('track_changes') : array());
+          $item1->set('track_changes', array_merge($item1->get('track_changes'), $item2->get('track_changes')));
+          foreach ($item2->get('subitems') as $subitem2) {
             if ($subitem2) { 
               if(!$item1->subitemExists($subitem2)) {
-                $item1->subitems[] = $subitem2;
+                $item1->add('subitems', $subitem2);
               }
               else {
                 $subitem2->delete(TRUE, FALSE); // delete its sub-elements but no need to delete from the parent item2, as it will be deleted anyway.
               }
             }
           }
-          foreach ($item2->related_items as $related_item2) {
-            if (isset($related_item2->referred_item) && $item1->getId() != $related_item2->referred_item->getId() && !$item1->relatedItemExists($related_item2)) {
-              $item1->related_items[] = $related_item2;
-            }
-            else {
+          foreach ($item2->get('related_items') as $related_item2) { // If it's not a circular reference and the items isn't already related to item1, we add the related item.
+            if ($related_item2) {
+              if ($related_item2->get('referred_item') && $item1->getId() <> $related_item2->get('referred_item')->getId() && !$item1->relatedItemExists($related_item2)) {
+                $item1->add('related_items', $related_item2);
+              }
+              else {
               $related_item2->delete();
+              }
             }
           }
-          $item1->is_merged = 1;
+          $item1->set('is_merged', 1);
+          $item1->setDisplayTitle();
           $item1->saveItem();
           // Change related items pointing to item2 so they now point to item1 (if they werent' already).
-          $referring_relitems_item2_ids = IdsKsRelatedItem::getParentsIds(array('referred_item' => $item2->getId()));
-          foreach ($referring_relitems_item2_ids as $referring_relitem_item2_id) {
+          $relitems_parents_item2_ids = IdsKsRelatedItem::getIds(array('referred_item' => $item2->getId()));
+          foreach ($relitems_parents_item2_ids as $relitem_parent_item2_id) {
             $relitem_parent_item2 = new IdsKsRelatedItem;
-            $relitem_parent_item2->load($referring_relitem_item2_id);
-            $referring_items_ids = IdsKsItem::getParentsIds(array('related_items' => $referring_relitem_item2_id));
-            $parent_item_id = end($referring_items_ids); // There should be exactly one for each relationship.
-            $parent_item = new IdsKsItem;
-            $parent_item->load($parent_item_id);
-            $relitem_parent_item1 = new IdsKsRelatedItem; // Dummy related item to check if it exists.
-            $relitem_parent_item1->source = $relitem_parent_item2->source;
-            $relitem_parent_item1->relationship = $relitem_parent_item2->relationship;
-            $relitem_parent_item1->referred_item = $item1;
-            // If there isn't already a relationship (with the same source and type of rel.) to item1 in item2's parent, we change item2 by item1 and save the existing relationship.
-            if (!$parent_item->relatedItemExists($relitem_parent_item1)) {
-              $relitem_parent_item2->referred_item = $item1;
-              $relitem_parent_item2->save();
+            $relitem_parent_item2->load($relitem_parent_item2_id);
+            if ($relitem_parent_item2->get('source') && $relitem_parent_item2->get('relationship')) {
+              if ($parent_items_item2_ids = IdsKsItem::getIds(array('related_items' => $relitem_parent_item2_id))) {
+                $parent_item2_id = end($parent_items_item2_ids); // There should be exactly one for each relationship.
+                $referring_relitems_item1_ids = IdsKsRelatedItem::getIds(array('source' => $relitem_parent_item2->get('source')->getId(), 'relationship' => $relitem_parent_item2->get('relationship')->getId(), 'referred_item' => $item1->getId()));
+                $parent_items_item1_ids = IdsKsItem::getIds(array('related_items' => $referring_relitems_item1_ids));
+                $parent_item2 = new IdsKsItem;
+                $parent_item2->load($parent_item2_id);
+                if (!in_array($parent_item2_id, $parent_items_item1_ids)) { // item1 is not referred to by item2's parent item in the same relationship and with the same source.
+                  $relitem_parent_item2->set('referred_item', $item1); // the existing related item now points to item1.
+                  $relitem_parent_item2->save();
+                }
+                else { // It's already pointing to item1, we can delete the pointer to item2.
+                  $parent_item2_related_items = $parent_item2->get('related_items');
+                  foreach ($parent_item2_related_items as $pos => $parent_rel_item) {
+                    if ($parent_rel_item && $parent_rel_item->getId() == $relitem_parent_item2_id) {
+                      unset($parent_item2_related_items[$pos]);
+                    }
+                  }
+                  $parent_item2->set('related_items', array_filter($parent_item2_related_items));
+                  $parent_item2->save();
+                  $relitem_parent_item2->delete();
+                }
+              }
+              else {
+                $relitem_parent_item2->delete();
+              }
+            }
+            else {
+              $relitem_parent_item2->delete();
             }
           }
-          $item2->delete(FALSE, TRUE); // We don't delete the literals, changes, subitems and related items, as they are now part of item1. We do delete it from its parents.
+          $item2->delete(FALSE, FALSE); // We don't delete the literals, changes, subitems and related items, as they are now part of item1.
         }
         else {
           trigger_error(t('Items of different types cannot be merged.'));
@@ -659,7 +932,6 @@ class IdsKsItem extends IdsKsObject {
   }
 
   public static function mergeMultipleItemsById($items_ids) {
-    debug($items_ids, 'Merging...');
     if (count($items_ids) > 1) {
       $item1_id = array_shift($items_ids);
       $item2_id = array_shift($items_ids);
@@ -697,7 +969,7 @@ class IdsKsItem extends IdsKsObject {
       if (empty($item1_ids)) {
         if (empty($item2_ids)) {
           $mapped_item = new IdsKsItem();
-          $mapped_item->type = $type;
+          $mapped_item->set('type', $type);
           $mapped_item->addValues($identifiers[1], $source1);
           $mapped_item->addChanges($source1);
           $mapped_item->addValues($identifiers[2], $source2);
@@ -710,12 +982,12 @@ class IdsKsItem extends IdsKsObject {
           $mapped_item->addChanges($source1);
         }
         if ($display_title = $mapped_item->getDisplayFieldValue('title')) {
-          $mapped_item->display_title = $display_title;
+          $mapped_item->set('display_title', $display_title);
         }
         else {
-            $mapped_item->display_title = "$type->name ($source1->name, $source2->name)";
+            $mapped_item->set('display_title', "$type->get('name') ($source1->get('name'), $source2->get('name'))");
         }
-        $mapped_item->is_mapping = 1;
+        $mapped_item->set('is_mapping', 1);
         $mapped_item->saveItem();
       }
       else {
@@ -725,10 +997,10 @@ class IdsKsItem extends IdsKsObject {
           $mapped_item->addValues($identifiers[2], $source2);
           $mapped_item->addChanges($source2);
           if ($display_title = $mapped_item->getDisplayFieldValue('title')) {
-            $mapped_item->display_title = $display_title;
+            $mapped_item->set('display_title', $display_title);
           }
           else {
-            $mapped_item->display_title = "$type->name ($source1->name, $source2->name)";
+            $mapped_item->set('display_title', "$type->get('name') ($source1->get('name'), $source2->get('name'))");
           }
           $mapped_item->saveItem();
         }
@@ -737,7 +1009,7 @@ class IdsKsItem extends IdsKsObject {
           $item1->load(end($item1_ids));
           $item2 = new IdsKsItem();
           $item2->load(end($item2_ids));
-          $item1->is_mapping = 1;
+          $item1->set('is_mapping', 1);
           IdsKsItem::mergeItems($item1, $item2);
           $mapped_item = $item1;
         }
@@ -755,25 +1027,31 @@ class IdsKsItem extends IdsKsObject {
   public function getDuplicatesBySource($source) {
     $items_ids = array();
     $values_identifiers = array();
-    if (!empty($source->identifiers)) {
-      foreach ($source->identifiers as $path_key) {
-        if (!empty($this->versions_literals)) {
-          foreach ($this->versions_literals as $versions_literal) {
-            if ($versions_literal->path == $path_key) {
-              foreach ($versions_literal->literals as $literal) {
-                if ($literal->source == $source) {
-                  $values_identifiers[$path_key] = $literal->value;  
-                  break; // as it's a key for this source there should be only one.
+    if ($source->get('identifiers')) {
+      foreach ($source->get('identifiers') as $path_key) {
+        if ($type_specific = preg_match('/(\w+)\s*:\s*(\w+)/', $path_key, $matches)) { // The identifier applies only to certain types. This is a quick fix. TODO: Define identifiers based on combinations of source and type.
+          $type_name = $matches[1];
+          $path_key = $matches[2];
+        }
+        if (!$type_specific || ($this->get('type') && strtolower($this->get('type')->get('name')) == $type_name)) {
+          if ($this->get('versions_literals')) {
+            foreach ($this->get('versions_literals') as $versions_literal) {
+              if ($versions_literal->get('path') == $path_key) {
+                foreach ($versions_literal->get('literals') as $literal) {
+                  if ($literal && $literal->get('source')->getId() == $source->getId()) {
+                    $values_identifiers[$path_key] = $literal->get('value');  
+                    break; // as it's a key for this source there should be only one.
+                  }
                 }
+                break;        
               }
-              break;        
             }
           }
         }
       }
     }
     if (!empty($values_identifiers)) {
-      $items_ids = IdsKsItem::retrieveItemIdsByKeys($values_identifiers, $source->compound_key, $source, $this->type);
+      $items_ids = IdsKsItem::retrieveItemIdsByKeys($values_identifiers, $source->get('compound_key'), $source, $this->get('type'));
     }
     return $items_ids;
   }
@@ -781,56 +1059,35 @@ class IdsKsItem extends IdsKsObject {
   // Returns an array of item ids that are duplicated in relation to the current item, based on the values of the type's ids.
   public function getDuplicatesByType() {
     $items_ids = array();
-    if (isset($this->type)) {
-      $type = $this->type;
-      $values_identifiers = array();
-      if (!empty($type->identifiers)) {
-        foreach ($type->identifiers as $path_key) {
-          if (isset($this->versions_literals) && !empty($this->versions_literals)) {
-            foreach ($this->versions_literals as $versions_literal) {
-              if (isset($versions_literal->literals) && !empty($versions_literal->literals) && ($versions_literal->path == $path_key)) {
-                $literal = end($versions_literal->literals); // It is assumed that if two items are the same, the values for the keys from all the sources will be the same.
-                if (isset($literal->value)) {
-                  $values_identifiers[$path_key] = $literal->value;  
-                  break;        
+    if ($this->get('type')) {
+      $type = $this->get('type');
+      if ($type->get('title_identifier') && $this->get('display_title')) {
+        $items_ids = IdsKsItem::getIds(array('display_title' => $this->get('display_title'), 'type' => $type->getId()));
+      }
+      if (empty($items_ids)) {
+        $values_identifiers = array();
+        if ($type->get('identifiers')) {
+          foreach ($type->get('identifiers') as $path_key) {
+            if ($this->get('versions_literals')) {
+              foreach ($this->get('versions_literals') as $versions_literal) {
+                if ($versions_literal->get('literals') && $versions_literal->get('path') == $path_key) {
+                  $literal = end($versions_literal->get('literals')); // It is assumed that if two items are the same, the values for the keys from all the sources will be the same.
+                  if ($literal && !is_null($literal->get('value'))) {
+                    $values_identifiers[$path_key] = $literal->get('value');  
+                    break;        
+                  }
                 }
               }
             }
           }
         }
-      }
-      if (!empty($values_identifiers)) {
-        $items_ids = IdsKsItem::retrieveItemIdsByKeys($values_identifiers, $type->compound_key, NULL, $type);
+        if (!empty($values_identifiers)) {
+          $items_ids = IdsKsItem::retrieveItemIdsByKeys($values_identifiers, $type->get('compound_key'), NULL, $type);
+        }
       }
     }
     return $items_ids;
   }
-
-
-  /* Returns an item based on the values present of the paths passed in $path_values (according to the source and type if present).
-  public static function retrieveItemByValues($path_values, $compound_keys = FALSE, $source = NULL, $item_type = NULL) {
-    $found_item = NULL;
-    $found_item_ids = IdsKsItem::retrieveItemIdsByKeys($path_values, $compound_keys, $source, $item_type);
-    if (!empty($found_items_ids)) { // we get the first one that matches the type.
-      $item = new IdsKsItem();
-      foreach ($found_items_ids as $item_id) {
-        $item->load($item_id);
-        if (isset($item_type)) {
-          if (isset($item->type) && ($item->type == $item_type)) {
-            $found_item = $item;
-          }
-        }
-        else {
-          $found_item = $item;
-        }
-        if (!empty($found_item)) {
-          break;
-        }
-      }
-    }
-    return $found_item;
-  }
-  */
 
   // Returns an item based on the values present of the identifiers passed in $path_values (according to the source and type if present).
   public static function retrieveItemIdsByKeys($path_values, $compound_keys = FALSE, $source = NULL, $type = NULL) {
@@ -847,7 +1104,7 @@ class IdsKsItem extends IdsKsObject {
       $items_ids_path = array();
       foreach ($versions as $versions_literal) {
         $filters['versions_literals'] = $versions_literal->getId(); 
-        $items_ids = IdsKsItem::getParentsIds($filters);
+        $items_ids = IdsKsItem::getIds($filters);
         $items_ids_path = array_merge($items_ids_path, $items_ids);
       }
       if (!$compound_keys) {
@@ -865,9 +1122,9 @@ class IdsKsItem extends IdsKsObject {
 // Retrieve the versions of the literal based on its path.
   public function retrieveVersionsLiteralPath($path) {
     $found_versions_literal = NULL;
-    if (isset($this->versions_literals)) {
-      foreach ($this->versions_literals as $versions_literal) {
-        if (isset($versions_literal->path) && ($versions_literal->path == $path)) {
+    if ($this->get('versions_literals')) {
+      foreach ($this->get('versions_literals') as $versions_literal) {
+        if ($versions_literal && $versions_literal->get('path') && $versions_literal->get('path') == $path) {
           $found_versions_literal = $versions_literal;
           break;
         }
@@ -880,43 +1137,44 @@ class IdsKsItem extends IdsKsObject {
   public function getVersionsLiteralPath($mapped_path) {
     $found_versions_literal = $this->retrieveVersionsLiteralPath($mapped_path);
     if (!$found_versions_literal) {
-      if (!isset($this->versions_literals)) { // the array does not exist.
-        $this->versions_literals = array();
+      if (!is_array($this->get('versions_literals'))) {
+        $this->set('versions_literals', array());
       }
       $found_versions_literal = new IdsKsVersionsLiteral();
-      $found_versions_literal->path = $mapped_path;
-      $this->versions_literals[] = $found_versions_literal;
+      $found_versions_literal->set('path', $mapped_path);
+      $this->add('versions_literals', $found_versions_literal);
     }
     return $found_versions_literal;
   }
 
   // Deletes all values in the item for the indicated source.
-  // TODO: Change back to protected.
   public function deleteLiteralsSource($source) {
-    if (isset($this->versions_literals)) {
-      foreach ($this->versions_literals as $key => $versions_literal) {
+    if ($this->get('versions_literals')) {
+      $versions_literals = $this->get('versions_literals');
+      foreach ($versions_literals as $key => $versions_literal) {
         $delete_literals_ids = array();
-        if (isset($versions_literal->literals)) {
-          foreach ($versions_literal->literals as $literal) {
-            if (isset($literal->source) && $literal->source == $source) {
+        if ($versions_literal->get('literals')) {
+          foreach ($versions_literal->get('literals') as $literal) {
+            if ($literal && $literal->get('source')->getId() == $source->getId()) {
               $delete_literals_ids[] = $literal->getId();
             }
           }
           $versions_literal->deleteLiteralsByIds($delete_literals_ids);
         }
-        if (empty($versions_literal->literals)) {
-          unset($this->versions_literals[$key]);
+        if (!$versions_literal->get('literals')) {
+          unset($versions_literals[$key]);
           $versions_literal->delete(FALSE, FALSE);          
         }
       }
-      $this->versions_literals = array_values(array_filter($this->versions_literals));
+      $this->set('versions_literals', array_values(array_filter($versions_literals)));
     }
   }
 
   // Removes all subitems corresponding to the source from the subitems list of the item.
-  protected function removeSubitemsSource($source) {
-    if (isset($this->subitems)) {
-      foreach ($this->subitems as $key => $subitem) {
+  public function removeSubitemsSource($source) {
+    if ($this->get('subitems')) {
+      $subitems = $this->get('subitems');
+      foreach ($subitems as $key => $subitem) {
         if (!($subitem->isTypedItem())) { // if it's not a typed subitem, it's specific of this item.
           $subitem->deleteLiteralsSource($source);
           $subitem->removeSubitemsSource($source);
@@ -924,42 +1182,43 @@ class IdsKsItem extends IdsKsObject {
             $subitem->delete();
           }
         }
-        unset($this->subitems[$key]);
+        unset($subitems[$key]);
       }
-      //$this->subitems = array_values($this->subitems);
-      $this->subitems = array_values(array_filter($this->subitems));
+      $this->set('subitems', array_values(array_filter($subitems)));
     }
   }
 
   // Removes all root attirbutes corresponding to the source from the item.
-  protected function removeRootAttributesSource($source) {
-    if (isset($this->root_attributes)) {
-      foreach ($this->root_attributes as $key => $root_attribute) {
-        if (preg_match('/^\['.$source->code.'\]:/', $root_attribute->name)) {
-          unset($this->root_attributes[$key]);
+  public function removeRootAttributesSource($source) {
+    if ($this->get('root_attributes')) {
+      $root_attributes = $this->get('root_attributes');
+      foreach ($root_attributes as $key => $root_attribute) {
+        if (preg_match('/^\['.$source->get('code').'\]:/', $root_attribute->get('name'))) {
+          unset($root_attributes[$key]);
         }
       }
-      $this->subitems = array_values(array_filter($this->subitems));
+      $this->set('root_attributes', array_values(array_filter($root_attributes)));
     }
   }
 
   // Removes all related items corresponding to the source from the related_items list of the item.
-  protected function removeRelatedItemsSource($source) {
-    if (isset($this->related_items)) {
-      foreach ($this->related_items as $key => $related_item) {
-        if (isset($related_item->source) && ($related_item->source == $source)) {
+  public function removeRelatedItemsSource($source) {
+    if ($this->get('related_items')) {
+      $related_items = $this->get('related_items');
+      foreach ($related_items as $key => $related_item) {
+        if ($related_item && $related_item->get('source')->getId() == $source->getId()) {
           $related_item->delete();
-          unset($this->related_items[$key]);
+          unset($related_items[$key]);
         }
       }
-      $this->related_items = array_values(array_filter($this->related_items));
+      $this->set('related_items', array_values(array_filter($related_items)));
     }
   }
 
-  protected function subitemExists($new_subitem) {
+  public function subitemExists($new_subitem) {
     $found = FALSE;
-    if (isset($this->subitems)) {
-      foreach ($this->subitems as $subitem) {
+    if ($this->get('subitems')) {
+      foreach ($this->get('subitems') as $subitem) {
         if (IdsKsItem::equal($new_subitem, $subitem)) {
           $found = TRUE;
           break;
@@ -969,15 +1228,15 @@ class IdsKsItem extends IdsKsObject {
     return $found;
   }
 
-  protected function relatedItemExists($new_related_item) {
+  public function relatedItemExists($new_related_item) {
     $found = FALSE;
-    $related_items_referred_item = isset($new_related_item->referred_item) ? IdsKsRelatedItem::getParentsIds(array('referred_item' => $new_related_item->referred_item->getId())) : array();
+    $related_items_referred_item = ($new_related_item->get('referred_item')) ? IdsKsRelatedItem::getIds(array('referred_item' => $new_related_item->get('referred_item')->getId())) : array();
     $related_items_item = IdsKsItem::getChildrenIds($this->getId(), 'related_items');
     $candidate_related_items_ids = array_intersect($related_items_item, $related_items_referred_item);
     foreach ($candidate_related_items_ids as $related_item_id) {
       $related_item = new IdsKsRelatedItem();
       $related_item->load($related_item_id);
-      if ($found = ($related_item->source == $new_related_item->source) && ($related_item->relationship == $new_related_item->relationship)) {
+      if ($found = ($related_item->get('source')->getId() == $new_related_item->get('source')->getId()) && ($related_item->get('relationship')->getId() == $new_related_item->get('relationship')->getId())) {
         break;
       }
     }
@@ -985,18 +1244,18 @@ class IdsKsItem extends IdsKsObject {
   }
 
   // Populates an item with the values present in the XML passed. Main function used to import items.
-  public function populateItemXML($xml_item, $item_path, $source, $format, $recursion = FALSE, $collected_attributes = array()) {
+  public function populateItemXML($xml_item, $item_path, $source, $format, $attributes_added = FALSE, $preprocessed = FALSE, $collected_attributes = array()) {
     $versions_literals = array();
     $root_attributes_xml = (array) $xml_item->attributes();
     $root_attributes = array();
     if (!empty($root_attributes_xml)) {
-      if (!$recursion) {
+      if (!$attributes_added) {
         $this->addRootAttributes($root_attributes_xml, $source, $item_path);
       }
       $root_attributes = IdsKsAttribute::getAttributesArray($root_attributes_xml);
       $collected_attributes = array_unique(array_merge($root_attributes, $collected_attributes), SORT_REGULAR);
     }
-    foreach ($xml_item as $xml_tag => $xml_value) { 
+    foreach ($xml_item as $xml_tag => $xml_value) {
       $xml_tag = idskshub_restore_namespace($xml_tag);
       $xml_path = $item_path . '/' . $xml_tag;
       if (($xml_value->count() > 0) || ((string) $xml_value)) { // If it's not an empty tag.
@@ -1004,125 +1263,161 @@ class IdsKsItem extends IdsKsObject {
         $attributes_value = IdsKsAttribute::getAttributesArray($attributes_xml);
         $attributes_value = array_unique(array_merge($attributes_value, $collected_attributes), SORT_REGULAR); // add the parent's attributes that are not in the current element, to use in mappings.
         $new_path_mapped = $xml_path;
-        if ($mapping = IdsKsMapping::getMapping($xml_path, $attributes_value, $format, $source, $this->type)) {
-          if (isset($mapping->path_destination) && $mapping->path_destination) {
-            $new_path_mapped = $mapping->path_destination;
-          }
-        }
-        if (!(isset($mapping->action) && ($mapping->action == 'IGNORE'))) { // Not set to IGNORE.
-          if (isset($mapping->action) && ($mapping->action == 'PREPROCESS') && (isset($mapping->path_destination))) {
-            $callback = $mapping->path_destination;
+        if (!IdsKsMapping::isIgnore($xml_path, $attributes_value, $format, $source, $this->get('type'))) { // Not set to IGNORE
+          if (($callback = IdsKsMapping::isPreprocess($xml_path, $attributes_value, $format, $source, $this->get('type'))) && !$preprocessed) { // Is PREPROCESS.
             if (is_callable($callback)) {
-              $xml_new_value = $callback($xml_value, $source, $xml_path, $collected_attributes);
-              if (is_a($xml_new_value, 'SimpleXMLElement')) {
-                $xml_new_tag = $xml_new_value->getName();
-                $xml_path .= '/' . $xml_new_tag;
-                $this->populateItemXML($xml_new_value, $xml_path, $source, $format, TRUE, $collected_attributes);
+              $callback($xml_value, $source, $xml_path, $collected_attributes); // Can change $xml_value and $xml_path.
+              if (is_a($xml_value, 'SimpleXMLElement')) {
+                $this->populateItemXML($xml_value, $xml_path, $source, $format, TRUE, TRUE, $collected_attributes);
               }
               else {
-                trigger_error(t('Callback function @callback did not return a valid SimpleXMLElement and the element @field_path was ignored.', array('@callback' => $callback, '@field_path' => $xml_path)));
+                  trigger_error(t('Callback function @callback did not return a valid SimpleXMLElement and the element @field_path was ignored.', array('@callback' => $callback, '@field_path' => $xml_path)));
               }
             }
             else {
               trigger_error(t('Callback function @callback could not be invoked and the element @field_path was ignored. Please make sure that the function is defined in idskshub.callback.inc.', array('@callback' => $callback, '@field_path' => $xml_path)));
             }
           }
-          elseif (isset($mapping->relationship)) { // Create a new relationship to a related item.
-            $is_literal = FALSE;
-            if (isset($mapping->path_destination) && $mapping->path_destination) {
-              $xml_value->addChild($mapping->path_destination, (string)$xml_value);
+          else { // Not PREPROCESS mapping.
+            if (!$mappings = IdsKsMapping::getMappings($xml_path, $attributes_value, $format, $source, $this->get('type'), '', 'PREPROCESS')) { // There are other mappings, excluding preprocess. 
+              $mappings[] = new IdsKsMapping;
             }
-            elseif (!$xml_value->count()) { // If it's not a structured value and no mapping field has been defined, we add a default field.
-              $xml_value->addChild(IDSKS_DEFAULT_MAPPED_FIELD, (string)$xml_value); //TODO: Check the type's title fields, if they are defined.
-            }
-            $new_referred_item = new IdsKsItem();
-            $new_referred_item->type = $mapping->relationship->item_type;
-            $new_referred_item->populateItemXML($xml_value, $xml_path, $source, $format);
-            $referred_item_ids = $new_referred_item->getDuplicatesBySource($source); // Look by the source's ids.
-            if ($not_found_by_source = empty($referred_item_ids)) { 
-              $referred_item_ids = $new_referred_item->getDuplicatesByType(); // Look by type.
-            }
-            if (empty($referred_item_ids)) { // It's a new item of this type. We save it.
-              $referred_item = $new_referred_item;
-              $referred_item->saveItem();
-              $referred_item->saveSubitems();
-              $referred_item->saveRelatedItems();
-            }
-            else { // The item already exists. We load it, add the new values from this source and save it.
-              $referred_item_id = end($referred_item_ids);
-              $referred_item = new IdsKsItem();
-              $referred_item->load($referred_item_id);              
-              if ($not_found_by_source && !$referred_item->hasContentFromSource($source->getId())) { // We only update it if it doesn't already have content from this source.
-                $referred_item->updateSourceValues($new_referred_item, $source);
-                $referred_item->saveItem();
+            foreach ($mappings as $mapping) {
+              if ($mapping->get('path_destination')) {
+                $new_path_mapped = $mapping->get('path_destination');
               }
-            }
-            $related_item = new IdsKsRelatedItem();
-            $related_item->source = $source;
-            $related_item->relationship = $mapping->relationship;
-            $related_item->referred_item = $referred_item;
-            $related_item->path = $xml_path;
-            $this->related_items[] = $related_item;
-          }
-          elseif ($xml_value->count() > 0) { // It's a structured value.
-            if (!(isset($mapping->action) && ($mapping->action == 'AS_STRING'))) { // The element should not be flattened.
-              $is_literal = FALSE;
-              $is_an_array = FALSE;
-              if (!$skip_tag = (isset($mapping->action) && ($mapping->action == 'SKIP'))) { // The element should not be skipped.
-                // Is it an array or a structured subitem? - Count the number of children with the same tag and attributes.
-                $tags_children = array();
-                $attributes_children = array();
-                foreach($xml_value->children() as $child) {
-                  $attributes_child = (array) $child->attributes();
-                  if (!in_array($attributes_child, $attributes_children)) {
-                    $attributes_children[] = $attributes_child;
+              if ($mapping->get('action') && $mapping->get('action') == 'RELATED_ITEM' && $mapping->get('relationship')) { // Create a new relationship to a related item.
+                $xml_value_related = clone $xml_value;
+                if ($mapping->get('path_destination')) {
+                  $xml_value_related->addChild($mapping->get('path_destination'), (string)$xml_value_related);
+                }
+                elseif (!$xml_value_related->count()) { // If it's not a structured value and no mapping field has been defined, we add a default field.
+                  $xml_value_related->addChild(IDSKS_DEFAULT_MAPPED_FIELD, (string)$xml_value_related); //TODO: Check the type's title fields, if they are defined.
+                }
+                $serialized_referred_item = $xml_value_related->asXML();
+                $new_referred_item = new IdsKsItem();
+                $new_referred_item->set('type', $mapping->get('relationship')->get('item_type'));
+                $new_referred_item->populateItemXML($xml_value_related, $xml_path, $source, $format);
+                $referred_item_ids = $new_referred_item->getDuplicatesBySource($source); // Look by the source's ids.
+                if ($found_by_source = !empty($referred_item_ids)) {
+                  $update_existing = FALSE; // We do not update related items from the same source "indirectly".
+                }
+                else {
+                  $referred_item_ids = $new_referred_item->getDuplicatesByType(); // Look by type.
+                  $update_existing = $new_referred_item->get('type')->get('update_existing');
+                }
+                if (empty($referred_item_ids)) { // It's a new item of this type. We save it.
+                  $referred_item = $new_referred_item;
+                  $referred_item->saveSubitems();
+                  $referred_item->saveRelatedItems();
+                  $referred_item->addChanges($source, $serialized_referred_item);
+                  $referred_item->saveItem();
+                }
+                else { // Matching items already exist. 
+                  if ($found_by_source || $update_existing) {
+                    $referred_item_id = end($referred_item_ids);
+                    $referred_item = new IdsKsItem();
+                    $referred_item->load($referred_item_id);              
+                    if ($update_existing && !$referred_item->hasContentFromSource($source->getId())) { // We only update it if it doesn't already have content from this source.
+                      $referred_item->updateSourceValues($new_referred_item, $source);
+                      $referred_item->saveSubitems();
+                      $referred_item->saveRelatedItems();
+                      $referred_item->addChanges($source, $serialized_referred_item);
+                      $referred_item->saveItem();
+                    }
                   }
-                  $tag_child = $child->getName();
-                  if (!in_array($tag_child, $tags_children)) {
-                    $tags_children[] = $tag_child;
+                  else { // We add "same as" links to matching items.
+                    // Get source corresponding to the OKHub;
+                    $okhub_source = new IdsKsSource;
+                    $okhub_source->set('code', IDSKS_OKHUB_SOURCE_CODE);
+                    $okhub_source->load();
+                    $referred_item = $new_referred_item;
+                    $rel_items = array();
+                    $same_as_rel = new IdsKsRelationship;
+                    if ($referred_item->get('type')->get('name')) {
+                      $same_as_rel->set('code', 'same_as_' . strtolower($referred_item->get('type')->get('name')));
+                      $same_as_rel->load();
+                      if ($same_as_rel->getId()) {
+                        foreach ($referred_item_ids as $referred_item_id) {
+                          $rel_item = new IdsKsItem;
+                          $rel_item->load($referred_item_id);
+                          $rel_items[] = $rel_item;
+                          $new_rel_item = new IdsKsRelatedItem;
+                          $new_rel_item->set('referred_item', $rel_item);
+                          $new_rel_item->set('relationship', $same_as_rel);
+                          $new_rel_item->set('source', $okhub_source);
+                          $new_rel_item->save();
+                          $referred_item->add('related_items', $new_rel_item);
+                        }
+                      }
+                    }
+                    $referred_item->saveSubitems();
+                    $referred_item->saveRelatedItems();
+                    $referred_item->addChanges($source, $serialized_referred_item);
+                    $referred_item->saveItem();
+                    if (!empty($rel_items) && $same_as_rel->getId()) { // We have to add the links from the existing items to the new rel. item.
+                      foreach ($rel_items as $rel_item) {
+                        $new_rel_item = new IdsKsRelatedItem;
+                        $new_rel_item->set('referred_item', $referred_item);
+                        $new_rel_item->set('relationship', $same_as_rel);
+                        $new_rel_item->set('source', $okhub_source);
+                        $new_rel_item->save();
+                        $rel_item->add('related_items', $new_rel_item);
+                        $rel_item->save();
+                      }
+                    }
                   }
                 }
-                $is_an_array = (count($tags_children) < 2 && count($attributes_children) < 2); // All the children have the same tag and attributes - it is an array.
+                $related_item = new IdsKsRelatedItem();
+                $related_item->set('source', $source);
+                $related_item->set('relationship', $mapping->get('relationship'));
+                $related_item->set('referred_item', $referred_item);
+                $related_item->set('path', $xml_path);
+                $this->add('related_items', $related_item);
               }
-              if ($skip_tag || $is_an_array) { // it's an array or a "skip tag". we don't add another structure, but add each element to the parent item.
-                $this->populateItemXML($xml_value, $xml_path, $source, $format, TRUE, $collected_attributes);
+              elseif ($xml_value->count() > 0) { // It's a structured value. Not RELATED_ITEM.
+                $is_an_array = FALSE;
+                if (!$skip_tag = ($mapping->get('action') && $mapping->get('action') == 'SKIP')) { // The element should not be skipped.
+                  // Is it an array or a structured subitem? - Count the number of children with the same tag and attributes.
+                  $tags_children = array();
+                  $attributes_children = array();
+                  foreach($xml_value->children() as $child) {
+                    $attributes_child = (array) $child->attributes();
+                    if (!in_array($attributes_child, $attributes_children)) {
+                      $attributes_children[] = $attributes_child;
+                    }
+                    $tag_child = $child->getName();
+                    if (!in_array($tag_child, $tags_children)) {
+                      $tags_children[] = $tag_child;
+                    }
+                  }
+                  $is_an_array = (count($tags_children) < 2 && count($attributes_children) < 2); // All the children have the same tag and attributes - it is an array.
+                }
+                if ($skip_tag || $is_an_array) { // It's an array or a "skip tag". We don't add another structure, but add each element to the parent item.
+                  $this->populateItemXML($xml_value, $xml_path, $source, $format, TRUE, $preprocessed, $collected_attributes);
+                }
+                else { // It is a structured subitem.
+                  $subitem = new IdsKsItem();
+                  $subitem->set('type', IdsKsType::getGenericType());
+                  $subitem->set('path', $new_path_mapped);
+                  $subitem->populateItemXML($xml_value, $xml_path, $source, $format);
+                  $this->add('subitems', $subitem);
+                }
               }
-              else { // it is a structured subitem.
-                $subitem = new IdsKsItem();
-                $subitem->type = IdsKsType::getGenericType();
-                $subitem->path = $new_path_mapped;
-                $subitem->populateItemXML($xml_value, $xml_path, $source, $format);
-                $this->subitems[] = $subitem;
+              else { // It is a literal
+                if (!isset($versions_literals[$new_path_mapped])) { // retrieve exising versions literal corresponding to the path (or create it if it doesn't exist).
+                  $versions_literals[$new_path_mapped] = $this->getVersionsLiteralPath($new_path_mapped);
+                }
+                $versions_literals[$new_path_mapped]->addLiteralXML($xml_value, $source, $xml_path, $attributes_value); // The literal value is added to the item.
               }
-            }
-            else { // Flatten value and import as string.
-              $is_literal = TRUE;
-              $xml_value = $xml_value->asXML();
-            }
-          }
-          else {
-            $is_literal = TRUE;
-          }
-          if ($is_literal) {
-            if (!isset($versions_literals[$new_path_mapped])) { // retrieve exising versions literal corresponding to the path (or create it if it doesn't exist).
-              $versions_literals[$new_path_mapped] = $this->getVersionsLiteralPath($new_path_mapped);
-            }
-            if (isset($mapping->action) && ($mapping->action == 'SPLIT')) { // Treat values in a comma-separated string as different values.
-              $values_array = preg_split('/\s*[,\;]\s*/', (string)$xml_value);
-              foreach ($values_array as $value_lit) { // The literal values are added to the item.
-                $versions_literals[$new_path_mapped]->addLiteralXML($value_lit, $source, $xml_path, $attributes_value);
-              }
-            }
-            else { // The literal value is added to the item.
-              $versions_literals[$new_path_mapped]->addLiteralXML($xml_value, $source, $xml_path, $attributes_value);
             }
           }
         }
       }
     }
-    if (isset($this->type)) {
+    if ($this->get('type')) {
       if ($display_title = $this->getDisplayFieldValue('title')) {
-        $this->display_title = $display_title;
+        $this->set('display_title', $display_title);
       }
     }
   }
@@ -1135,20 +1430,20 @@ class IdsKsItem extends IdsKsObject {
     foreach ($semantic as $service_code => $checked) {
       if ($checked) {
         $source = new IdsKsSource();
-        $source->code = $service_code;
+        $source->set('code', $service_code);
         $source->load();
-        if ($source->getId() && $source->is_semantic) {
+        if ($source->getId() && $source->get('is_semantic')) {
           $semantic_entities = idskshub_semantic_services_call($service_code, $data);
           foreach ($semantic_entities as $path_entity_name => $entities) {
             $path_mapped = IdsKsMapping::getMappingDestination($path_entity_name);
             $versions_literal = $this->getVersionsLiteralPath($path_mapped);
             foreach ($entities as $entity) {
               $new_literal = new IdsKsLiteral();
-              $new_literal->source = $source;
-              $new_literal->value = $entity; 
-              $new_literal->original_path = $path_entity_name; 
+              $new_literal->set('source', $source);
+              $new_literal->set('value', $entity); 
+              $new_literal->set('original_path', $path_entity_name); 
               if (!($versions_literal->inLiterals($new_literal))) {
-                $versions_literal->literals[] = $new_literal;
+                $versions_literal->add('literals', $new_literal);
               }
             }
           }
@@ -1159,30 +1454,29 @@ class IdsKsItem extends IdsKsObject {
 
   // Indicates if the item is "typed" (corresponds to one of the main types defined in the hub).
   public function isTypedItem() {
-    return ($this->type->name != IDSKS_GENERIC_TYPE_NAME);
+    return ($this->get('type')->get('name') != IDSKS_GENERIC_TYPE_NAME);
   }
 
   // Updates an existing item with the values of the temporary item $new_item. *Does not save the item*.
   public function updateSourceValues($new_item, $source, $update_mode = 'incremental', $allow_multiple = 'allow_multiple') { // updates values in $this with the ones in $new_item.
-    $this->track_changes[] = $new_item->track_changes[0];
     // Literals
-    if (($update_mode == 'replace') && !empty($new_item->versions_literals)) {
+    if ($update_mode == 'replace' && $new_item->get('versions_literals')) {
       $this->deleteLiteralsSource($source);
-      if (empty($this->versions_literals)) {
-        $this->versions_literals = $new_item->versions_literals;
+      if (!$this->get('versions_literals')) {
+        $this->set('versions_literals', $new_item->get('versions_literals'));
       }
       else {
-        $this->versions_literals = array_merge(array_filter($this->versions_literals), $new_item->versions_literals);
+        $this->set('versions_literals', array_merge(array_filter($this->get('versions_literals')), $new_item->get('versions_literals')));
       }
     }
     else {
       // Add literals from the new_item's source (without duplicated values).
-      if (!empty($new_item->versions_literals)) {
-        foreach ($new_item->versions_literals as $new_versions_literal) {
-          $versions_literal = $this->getVersionsLiteralPath($new_versions_literal->path);
+      if ($new_item->get('versions_literals')) {
+        foreach ($new_item->get('versions_literals') as $new_versions_literal) {
+          $versions_literal = $this->getVersionsLiteralPath($new_versions_literal->get('path'));
           $literals_path_source = $versions_literal->getLiteralVersionsSource($source);
-          if (isset($new_versions_literal->literals)) { // Not necessary to filter by source because $new_item just has values from this source.
-            foreach ($new_versions_literal->literals as $new_literal) {
+          if ($new_versions_literal->get('literals')) { // Not necessary to filter by source because $new_item just has values from this source.
+            foreach ($new_versions_literal->get('literals') as $new_literal) {
               $versions_literal->addLiteralValue($new_literal, $literals_path_source, $allow_multiple);
             }
           }
@@ -1195,32 +1489,33 @@ class IdsKsItem extends IdsKsObject {
       $this->removeRelatedItemsSource($source);
       $this->removeRootAttributesSource($source);
     }
-    if (!empty($new_item->subitems)) {
-      foreach ($new_item->subitems as $new_subitem) {
+    if ($new_item->get('subitems')) {
+      foreach ($new_item->get('subitems') as $new_subitem) {
         if (!($this->subitemExists($new_subitem)) && !($new_subitem->isEmptyItem())) {
-          $new_subitem->saveItem(TRUE, FALSE);
-          $this->subitems[] = $new_subitem;
+          //$new_subitem->saveItem(TRUE, FALSE);
+          $this->add('subitems', $new_subitem);
         }
       }
     }
-    if (!empty($new_item->related_items)) {
-      foreach ($new_item->related_items as $new_related_item) {
-        if (($this->getId() <> $new_related_item->referred_item->getId()) && !$this->relatedItemExists($new_related_item)) {
-          $new_related_item->save();
-          $this->related_items[] = $new_related_item;
+    if ($new_item->get('related_items')) {
+      foreach ($new_item->get('related_items') as $new_related_item) {
+        if (($this->getId() <> $new_related_item->get('referred_item')->getId()) && !$this->relatedItemExists($new_related_item)) {
+          //$new_related_item->save();
+          $this->add('related_items', $new_related_item);
         }
       }
     }
-    if (!empty($new_item->root_attributes)) {
-      foreach ($new_item->root_attributes as $new_attribute) {
-        if (!in_array($new_attribute, $this->root_attributes)) {
-          $this->root_attributes[] = $new_attribute;
+    if ($new_item->get('root_attributes')) {
+      foreach ($new_item->get('root_attributes') as $new_attribute) {
+        if (array_udiff($this->get('root_attributes'), array($new_attribute), 'idskshub_diff')) {
+          $this->add('root_attributes', $new_attribute);
         }
       }
     }
-    if (empty($this->display_title) && !empty($new_item->display_title)) { // TODO. Assign based on source's "priorities".
-      $this->display_title = $new_item->display_title;
+    if (!$this->display_title && $new_item->display_title) { // TODO. Assign based on source's "priorities".
+      $this->set('display_title', $new_item->display_title);
     }
   }
 
 } // class IdsKsItem
+

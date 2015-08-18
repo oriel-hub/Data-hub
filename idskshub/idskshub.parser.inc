@@ -14,16 +14,16 @@ class IdsKsParser {
   public static function parseFile($file, $source, $feed, $format_code, $type_name, $mode, $semantic, $existing_items, $update_mode, $allow_multiple, $index_imported, $force_import) {
     if ($format_code) {
       $format = new IdsKsFormat();
-      $format->code = $format_code;
+      $format->set('code', $format_code);
       $format->load();
     }
-    elseif (isset($feed->default_format)) {
-      $format = $feed->default_format;
+    elseif ($feed->get('default_format')) {
+      $format = $feed->get('default_format');
     }
     else {
       drupal_set_message(t('The input format could not be retrieved. Please make sure that the feed has a default input format defined. RSS-XML assumed.'), 'warning');
       $format = new IdsKsFormat();
-      $format->code = IDSKS_DEFAULT_FORMAT;
+      $format->set('code', IDSKS_DEFAULT_FORMAT);
       $format->load();
     }
     if ($format->getId()) {
@@ -71,11 +71,11 @@ class IdsKsParser {
       $item_path = '';
       $root_path = '';
       $xml_root = '';
-      if (isset($format->root_path)) {
-        $root_path = $format->root_path;
+      if ($format->get('root_path')) {
+        $root_path = $format->get('root_path');
       }
-      if (!empty($format->item_paths)) {
-        $item_paths = $format->item_paths;
+      if ($format->get('item_paths')) {
+        $item_paths = $format->get('item_paths');
       }
       if ($root_path) {
         $root_string = '//' . idskshub_change_namespace($root_path);

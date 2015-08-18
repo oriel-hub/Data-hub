@@ -19,13 +19,13 @@ class IdsKsFetcher {
       $feed->load($feed_id);
     }
     if (!$source_id) {
-      if (isset($feed->source)) {
-        $source = $feed->source;
+      if ($feed->get('source')) {
+        $source = $feed->get('source');
       }
       else {
-        $source_id = IDSKS_UNDEFINED_SOURCE_ID;
         $source = new IdsKsSource();
-        $source->load($source_id);
+        $source->set('code', IDSKS_HUB_SOURCE_CODE);
+        $source->load();
       }
     }
     else {
@@ -38,8 +38,8 @@ class IdsKsFetcher {
     elseif ($url) {
       $file = system_retrieve_file($url, NULL, TRUE);
     }
-    elseif (isset($feed->url)) { // The file was not set, look for the feeds's import URL.
-      $url = $feed->url;
+    elseif ($feed->get('url')) { // The file was not set, look for the feeds's import URL.
+      $url = $feed->get('url');
       $file = system_retrieve_file($url, NULL, TRUE);
     }
     if (!empty($file)) {

@@ -16,7 +16,7 @@ class IdsKsProcessor {
     idskshub_set('index_imported', $index_imported['index']);
     if (($total_elements > IDSKS_NUM_ELEMENTS_INTERACTIVE) && ($mode == 'default')) {
       $mode = 'background';
-      $message = t('Importing process continue in background. You can leave this page.') . '<br>';
+      $message = t('Importing continues in background. You can leave this page.') . '<br>';
     }
     $num_skipped = 0;
     $xml_items = array();
@@ -34,7 +34,7 @@ class IdsKsProcessor {
         array('IdsKsProcessor::batchProcessItems', array($xml_items, $item_path, $source, $feed, $format, $type_name, $mode, $semantic, $existing_items, $update_mode, $allow_multiple, $force_import, $root_file_attributes)),
       ),  
       //'finished' => 'IdsKsProcessor::endProcessItems', not working?.
-      'title' => t('Importing from ') . $source->name,
+      'title' => t('Importing from ') . $source->get('name'),
       'init_message' => $init_message,
       'progress_message' => '',
       'error_message' => t('Error in the importing process.'),
@@ -120,63 +120,101 @@ class IdsKsProcessor {
 
   // Process each item and create/update the corresponding entity.
   public function processSingleItem($serialized_item, $item_path, $source, $feed, $format, $type_name, $semantic, $existing_items, $update_mode, $allow_multiple, $force_import, $root_file_attributes) {
+    $okhub_source = new IdsKsSource;
+    $okhub_source->set('code', IDSKS_OKHUB_SOURCE_CODE);
+    $okhub_source->load();
     $item_id = 0;
+    $related_items = array();
     $hash = IdsKsTrackChanges::newHash($serialized_item);
     if ($force_import['force'] || !IdsKsTrackChanges::hashExists($hash)) {
       $xml_item = simplexml_load_string($serialized_item);
       $new_item = new IdsKsItem();
-      $new_item->setItemType($source, $feed, $type_name); // Try to assign type before populating (to use in relationships, mappings, etc).  
+      $new_item->setItemType($source, $feed, $type_name); // Assign type before populating (to use in relationships, mappings, etc). The type should be known now.
       $new_item->populateItemXML($xml_item, $item_path, $source, $format);
-      //$new_item->setItemType($source, $feed, $type_name); // Update type based on the items' content. Now we are asking to indicate the type beforehand (in feeds or in manual imports).
       if (!empty($root_file_attributes)) {
         $new_item->addRootAttributes($root_file_attributes, $source);
       }
+      // We set the display_title so we can use it to identify existing items.
+      $new_item->setDisplayTitle();
       // if the item does not exist, we save the newly created item. If it exists, we update the values for this source.
       $items_ids = $new_item->getDuplicatesBySource($source);
-      if ($not_found_by_source = empty($items_ids)) {
-        $items_ids = $new_item->getDuplicatesByType(); // We could skip this based on $existing_items, but we want to get the item_id (of the unchanged item) to display.
+      if ($found_by_source = !empty($items_ids)) {
+        $update_existing = TRUE;
+      }
+      else {
+        $items_ids = $new_item->getDuplicatesByType();
+        $update_existing = $new_item->get('type')->get('update_existing');
       }
       if (empty($items_ids)) { // The item is new.
         $item = $new_item;
-        $item->saveSubitems();
-        $item->saveRelatedItems();
         $display = 'imported';
       }
       else {
-        if (count($items_ids) > 1) {
-          //IdsKsItem::mergeMultipleItemsById($items_ids);
-          $merge_candidates = idskshub_get('merge_candidates', array());
-          $merge_candidates[] = $items_ids;
-          idskshub_set('merge_candidates', $merge_candidates); // TODO: Add administrative interface to show and choose to merge.
-          trigger_error(t('Potentially duplicated items found. Please consider merging them: @item_ids.', array('@item_ids' => implode(',', $items_ids))));
-        }
-        $item_id = array_shift($items_ids); // the first id will be the item's, if there is only one, or the id of the merged item if mergeMultipleItemsById() is enabled.
-        if ($item_id) {
-          $item = new IdsKsItem();
-          $item->load($item_id);
-          if ($existing_items == 'update_existing' || ($not_found_by_source && !$item->hasContentFromSource($source->getId()))) {
-            $item->updateSourceValues($new_item, $source, $update_mode, $allow_multiple);
-            $display = 'updated';
+        if ($update_existing) { // Update existing item.
+          if (count($items_ids) > 1) {
+            //IdsKsItem::mergeMultipleItemsById($items_ids);
+            $merge_candidates = idskshub_get('merge_candidates', array());
+            $merge_candidates[] = $items_ids;
+            idskshub_set('merge_candidates', $merge_candidates); // TODO: Add administrative interface to show and choose to merge.
+            trigger_error(t('Potentially duplicated items found. Please consider merging them: @item_ids.', array('@item_ids' => implode(',', $items_ids))));
           }
-          else {
-            $display = 'unchanged';
+          $item_id = array_shift($items_ids); // the first id will be the item's, if there is only one, or the id of the merged item if mergeMultipleItemsById() is enabled.
+          if ($item_id) {
+            $item = new IdsKsItem();
+            $item->load($item_id);
+            if ($existing_items == 'update_existing' || (!$found_by_source && !$item->hasContentFromSource($source->getId()))) {
+              $item->updateSourceValues($new_item, $source, $update_mode, $allow_multiple);
+              $display = 'updated';
+            }
+            else {
+              $display = 'unchanged';
+            }
+          }
+        }
+        else { // Create new item and add "same as" links to existing items.
+          $item = $new_item;
+          $display = 'imported and linked to existing items';
+          // Get "same as" relationship based on the item's type.
+          $same_as_rel = new IdsKsRelationship;
+          if ($item->get('type')->get('name')) {
+            $same_as_rel->set('code', 'same_as_' . strtolower($item->get('type')->get('name')));
+            $same_as_rel->load();
+            if ($same_as_rel->getId()) {
+              foreach ($items_ids as $item_id) {
+                $rel_item = new IdsKsItem;
+                $rel_item->load($item_id);
+                $related_items[] = $rel_item;
+                $new_rel_item = new IdsKsRelatedItem;
+                $new_rel_item->set('referred_item', $rel_item);
+                $new_rel_item->set('relationship', $same_as_rel);
+                $new_rel_item->set('source', $okhub_source);
+                $new_rel_item->save();
+                $item->add('related_items', $new_rel_item);
+              }
+            }
           }
         }
       }
-      if (!($display_title = $item->getDisplayFieldValue('title'))) {
-        if (isset($source->name)) {
-          $display_title = $source->name;
-        }
-        $display_title .= ' ' . $type_name;
-      }
-      $item->display_title = html_entity_decode($display_title, ENT_COMPAT, "UTF-8");
+      $item->saveSubitems();
+      $item->saveRelatedItems();
       $item->addChanges($source, $serialized_item, $hash);
       $item->addSemanticData($semantic);
       $item->saveItem();
       $item_id = $item->getId();      
+      if ($item_id && !$update_existing && !empty($related_items) && $same_as_rel->getId()) { // In this case there are items and we have to create "same as" links from them.
+        foreach ($related_items as $rel_item) {
+          $new_rel_item = new IdsKsRelatedItem;
+          $new_rel_item->set('referred_item', $item);
+          $new_rel_item->set('relationship', $same_as_rel);
+          $new_rel_item->set('source', $okhub_source);
+          $new_rel_item->save();
+          $rel_item->add('related_items', $new_rel_item);
+          $rel_item->save();
+        }
+      }
     }
     if ($item_id) {
-      return array($display, $item_id, $item->type->name);
+      return array($display, $item_id, $item->get('type')->get('name'));
     }
     else {
       return FALSE;

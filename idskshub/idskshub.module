@@ -18,6 +18,34 @@ require_once('idskshub.processor.inc');
 require_once('idskshub.solr.inc');
 require_once('idskshub.semantic.inc');
 require_once('idskshub.callback.inc');
+require_once('idskshub.rdf.inc');
+
+
+// TODO. Manage the options below through the admin interface.
+function idskshub_supported_languages() {
+  $languages = array(
+    'en' => t('English'),
+    'es' => t('Spanish'),
+    'fr' => t('French'),
+    'pt' => t('Portuguese'),
+    'de' => t('German'),
+    'it' => t('Italian'),
+    'nl' => t('Dutch'),
+  );
+  return $languages;
+}
+
+function idskshub_mapping_actions() {
+  $actions = array(
+    'PREPROCESS' => 'PREPROCESS: Pre-process the content of the (XML) element by calling to a function',
+    'RELATED_ITEM' => 'RELATED_ITEM: Associate to a related item (select relationship type below)',
+    'IGNORE' => 'IGNORE: Ignore a structured (XML) element',
+    'SKIP' => 'SKIP: Skip one level of a structured (XML) element and continue processing its sub-elements',
+    //'AS_STRING' => 'AS_STRING: Import a structured (XML) element as a string', - Now this should be implemented with PREPROCESS.
+    //'SPLIT' => 'SPLIT: Import a comma-separated value as a set of different elements', - Now this should be implemented with PREPROCESS.
+  );
+  return $actions;
+}
 
 function idskshub_hook_info_alter(&$hooks) {
   $hooks['form_alter']['group'] = 'form';
@@ -28,7 +56,7 @@ function idskshub_get_formats_codes() {
   $f = new IdsKsFormat();
   $formats = $f->getObjectsByProperties();
   foreach ($formats as $format) {
-    $array_formats[$format->code] = $format->name;
+    $array_formats[$format->get('code')] = $format->get('name');
   }
   asort($array_formats);
   return $array_formats;    
@@ -39,8 +67,8 @@ function idskshub_get_types_names() {
   $t = new IdsKsType();
   $types = $t->getObjectsByProperties();
   foreach ($types as $type) {
-    if ($type->name !== IDSKS_GENERIC_TYPE_NAME) {
-      $array_types[$type->name] = $type->name;
+    if ($type->get('name') !== IDSKS_GENERIC_TYPE_NAME) {
+      $array_types[$type->get('name')] = $type->get('name');
     }
   }
   asort($array_types);
@@ -52,7 +80,7 @@ function idskshub_get_types_ids() {
   $t = new IdsKsType();
   $types = $t->getObjectsByProperties();
   foreach ($types as $type) {
-    $array_types[$type->getId()] = $type->name;
+    $array_types[$type->getId()] = $type->get('name');
   }
   asort($array_types);
   return $array_types;    
@@ -63,7 +91,7 @@ function idskshub_get_sources_codes() {
   $s = new IdsKsSource();
   $sources = $s->getObjectsByProperties();
   foreach ($sources as $source) {
-    $array_sources[$source->code] = $source->name;
+    $array_sources[$source->get('code')] = $source->get('name');
   }
   asort($array_sources);
   return $array_sources;    
@@ -74,7 +102,7 @@ function idskshub_get_relationship_ids() {
   $r = new IdsKsRelationship();
   $relationships = $r->getObjectsByProperties();
   foreach ($relationships as $relationship) {
-    $array_relationships[$relationship->getId()] = $relationship->type . ' - ' . $relationship->item_type->name;
+    $array_relationships[$relationship->getId()] = $relationship->get('type') . ' - ' . $relationship->get('item_type')->get('name');
   }
   asort($array_relationships);
   return $array_relationships;    
@@ -86,9 +114,33 @@ function idskshub_get_item_sources($item_id) {
   $sources = $item->getSourcesFromValues();
   $array_sources = array();
   foreach ($sources as $source) {
-    $array_sources[$source->getId()] = $source->name;
+    $array_sources[$source->getId()] = $source->get('name');
   }
   return $array_sources;
+}
+
+function idskshub_get_item_sources_codes($item_id) {
+  $item = new IdsKsItem();
+  $item->load($item_id);
+  $sources = $item->getSourcesFromValues();
+  $array_sources = array();
+  foreach ($sources as $source) {
+    $array_sources[$source->getId()] = $source->get('code');
+  }
+  return $array_sources;
+}
+
+function idskshub_get_types_source($source_id) {
+  $types_names = array();
+  if ($track_ids = IdsKsTrackChanges::getIds(array('source' => $source_id))) {
+    if ($items_ids = IdsKsItem::getIds(array('track_changes' => $track_ids))) {
+      if ($types_ids = array_unique(idskshub_flatten_array(IdsKsItem::getFieldValues('type', $items_ids)))) {
+        $types_names = idskshub_flatten_array(IdsKsType::getFieldValues('name', $types_ids));
+        $types_names = array_diff($types_names, array(IDSKS_GENERIC_TYPE_NAME));
+      }
+    }
+  }
+  return($types_names);
 }
 
 function idskshub_hub_source() {
@@ -96,13 +148,13 @@ function idskshub_hub_source() {
   if (!defined('IDSKS_HUB_SOURCE_CODE')) {
     drupal_set_message(t('IDSKS_HUB_SOURCE_CODE not defined. Code "hub" assumed.'), 'warning');
   }
-  $source->code = 'hub';
+  $source->set('code', 'hub');
   $source->load();
   if (!($source->isSaved())) {
     if (!defined('IDSKS_HUB_SOURCE_CODE')) {
       drupal_set_message(t('IDSKS_HUB_SOURCE_NAME not defined. Name "OKHub" assumed.'), 'warning');
     }
-    $source->name = 'OKHub';
+    $source->set('name', 'OKHub');
     $source->save();
   }
   return $source;
@@ -123,21 +175,21 @@ function idskshub_get_semantic_services() {
   $show_services = array();
   foreach ($semantic_services as $code => $name) {
     $source_semantic = new IdsKsSource();
-    $source_semantic->code = $code;
+    $source_semantic->set('code', $code);
     $source_semantic->load();
     if (!($source_semantic->getId())) { // If it doesn't exist, we created it.
       if (preg_match('/^[a-z]+$/', $code)) {
-        $source_semantic->name = $name;
-        $source_semantic->is_semantic = 1;
+        $source_semantic->set('name', $name);
+        $source_semantic->set('is_semantic', 1);
         $source_semantic->save();
         $show_services[$code] = $name;
       }
       else {
-        drupal_set_message(t('@code is not a valid source code. Please check the semantic services definitions', array('@name' => $name)), 'warning');
+        drupal_set_message(t('@code is not a valid source code. Please check the semantic services definitions', array('@code' => $code)), 'warning');
       }
     }
     else {
-      if (empty($source_semantic->is_semantic)) {
+      if (!$source_semantic->get('is_semantic')) {
         drupal_set_message(t('The source with code @code exists but it is not an external semantic augmentation service.', array('@code' => $code)), 'warning');        
       }
       else {
@@ -169,6 +221,32 @@ function idskshub_index_selected($items_ids, $page_batch='') {
   }
   else {
     drupal_set_message(t('No items were selected.'), 'status'); 
+  }
+}
+
+function idskshub_split_selected($items_ids, $page_batch='') {
+  if (!empty($items_ids)) {
+    $num = count($items_ids);
+    $items = ($num > 1) ? 'items' : 'item';
+    $batch = array(
+      'operations' => array(
+        array('idskshub_split_items', array($items_ids)),
+      ),  
+      'title' => t("Splitting @num @items", array('@num' => $num, '@items' => $items)),
+    );
+    batch_set($batch);
+    batch_process($page_batch);
+  }
+  else {
+    drupal_set_message(t('No items were selected.'), 'status'); 
+  }
+}
+
+function idskshub_split_items($items_ids) {
+  foreach ($items_ids as $item_id) {
+    $item = new IdsKsItem;
+    $item->load($item_id);
+    $item->splitBySources();
   }
 }
 
@@ -205,14 +283,14 @@ function idskshub_delete_literals_page($page_arguments) {
 }
 
 function idskshub_touch_by_sources($sources_ids) {
-  $changes_ids = IdsKsTrackChanges::getParentsIds(array('source' => $sources_ids));
-  $items_ids = IdsKsItem::getParentsIds(array('track_changes' => $changes_ids));
+  $changes_ids = IdsKsTrackChanges::getIds(array('source' => $sources_ids));
+  $items_ids = IdsKsItem::getIds(array('track_changes' => $changes_ids));
   IdsKsItem::markToIndex($items_ids);
 }
 
 function idskshub_index_by_sources($sources_ids) {
-  $changes_ids = IdsKsTrackChanges::getParentsIds(array('source' => $sources_ids));
-  $items_ids = IdsKsItem::getParentsIds(array('track_changes' => $changes_ids));
+  $changes_ids = IdsKsTrackChanges::getIds(array('source' => $sources_ids));
+  $items_ids = IdsKsItem::getIds(array('track_changes' => $changes_ids));
   idskshub_index_selected($items_ids, 'sources');
 }
 
@@ -382,7 +460,7 @@ function idskshub_delete_entity_form($form, &$form_state) {
         break;
       case 'ids_ks_source':
         $redirect = 'sources';
-        $used = IdsKsFeed::getParentsIds(array('source' => $entity->id)) || IdsKsMapping::getParentsIds(array('source' => $entity->id)) || IdsKsLiteral::getParentsIds(array('source' => $entity->id)) || IdsKsTrackChanges::getParentsIds(array('source' => $entity->id));
+        $used = IdsKsFeed::getIds(array('source' => $entity->id)) || IdsKsMapping::getIds(array('source' => $entity->id)) || IdsKsLiteral::getIds(array('source' => $entity->id)) || IdsKsTrackChanges::getIds(array('source' => $entity->id));
         if (!$used) {
           entity_delete('ids_ks_source', $entity->id);
           drupal_set_message(t('Source deleted.'), 'status'); 
@@ -393,7 +471,7 @@ function idskshub_delete_entity_form($form, &$form_state) {
         break;
       case 'ids_ks_contributor':
         $redirect = 'contributors';
-        $used = IdsKsSource::getParentsIds(array('contributor' => $entity->id));
+        $used = IdsKsSource::getIds(array('contributor' => $entity->id));
         if (!$used) {
           entity_delete('ids_ks_contributor', $entity->id);
           drupal_set_message(t('Contributor deleted.'), 'status'); 
@@ -404,7 +482,7 @@ function idskshub_delete_entity_form($form, &$form_state) {
         break;
       case 'ids_ks_type':
         $redirect = 'types';
-        $used = IdsKsItem::getParentsIds(array('type' => $entity->id)) || IdsKsFeed::getParentsIds(array('default_type' => $entity->id));
+        $used = IdsKsItem::getIds(array('type' => $entity->id)) || IdsKsFeed::getIds(array('default_type' => $entity->id));
         if (!$used) {
           entity_delete('ids_ks_type', $entity->id);
           drupal_set_message(t('Type deleted.'), 'status'); 
@@ -415,7 +493,7 @@ function idskshub_delete_entity_form($form, &$form_state) {
         break;
       case 'ids_ks_format':
         $redirect = 'formats';
-        $used = IdsKsMapping::getParentsIds(array('format' => $entity->id)) || IdsKsFeed::getParentsIds(array('default_format' => $entity->id));
+        $used = IdsKsMapping::getIds(array('format' => $entity->id)) || IdsKsFeed::getIds(array('default_format' => $entity->id));
         if (!$used) {
           entity_delete('ids_ks_format', $entity->id);
           drupal_set_message(t('Format deleted.'), 'status'); 
@@ -484,7 +562,7 @@ function idskshub_import_feeds() {
     $feed = new IdsKsFeed;
     $feed->load($feed_id);
     if ($feed->isSaved()) {
-      if ($feed->periodicity && (empty($feed->weekday) || in_array(date('l'), $feed->weekday)) && (!$latest_import_feed || ($latest_import_feed + $feed->periodicity * 86400 < time()))) {
+      if ($feed->get('periodicity') && (!$feed->get('weekday') || in_array(date('l'), $feed->get('weekday'))) && (!$latest_import_feed || ($latest_import_feed + $feed->get('periodicity') * 86400 < time()))) {
         idskshub_set('latest_import_feed_' . $feed_id, time());
         idskshub_import_feed($feed_id);
         break; // Run one at a time. Continue with the next one in the next cron run.
@@ -497,9 +575,13 @@ function idskshub_import_feed($feed_id, $import_mode='background') {
   $source_name = end(end(IdsKsSource::getFieldValues('name', IdsKsFeed::getChildrenIds($feed_id, 'source'))));
   $type_name = end(end(IdsKsType::getFieldValues('name', IdsKsFeed::getChildrenIds($feed_id, 'default_type'))));
   trigger_error(t('Importing from feed with id @feed (@source @type). @definition', array('@feed' => $feed_id, '@source' => $source_name, '@type' => $type_name, '@definition' => url("ids_ks_feed/ids_ks_feed/$feed_id", array('absolute'=>TRUE)))));
-  //$semantic = idskshub_semantic_services_definitions(); TODO: Call the semantic services from cron job for the new items.
-  $semantic = array();
-  IdsKsFetcher::fetchFile(0, '', 0, $feed_id, '', 'feed', $import_mode, $semantic, 'update_existing', 'incremental', 'replace', array('index' => 0), array('force' => 0));
+  if (IDSKS_FEEDS_SEMANTIC_ANNOTATION) {
+    $semantic = idskshub_semantic_services_definitions(); //TODO: Call the semantic services from cron job for the new items.
+  }
+  else {
+    $semantic = array();
+  }
+  IdsKsFetcher::fetchFile(0, '', 0, $feed_id, '', 'feed', $import_mode, $semantic, 'update_existing', IDSKS_FEEDS_UPDATE_MODE, IDSKS_FEEDS_UPDATE_FIELDS, array('index' => IDSKS_FEEDS_INDEX), array('force' => IDSKS_FEEDS_IMPORT_UNCHANGED));
 }
 
 // Implement hook_entity_insert().
@@ -529,8 +611,9 @@ function idskshub_entity_delete($entity, $entity_type) {
   }
 }
 
-// Apply mappings. TODO: Extend for mappings with actions and no destination path. Consider wildcards.
-// TODO: Check that the item type and mapping type match!!!
+// Apply mappings.
+// TODO: Extend for mappings with actions and relationships.
+//       Extend for mappings with wildcards.
 function idskshub_apply_mappings($mappings_ids) {
   $new_mappings = explode(',', $mappings_ids);
   $mappings_applied = array();
@@ -539,13 +622,12 @@ function idskshub_apply_mappings($mappings_ids) {
     foreach ($new_mappings as $mapping_id) {
       $mapping = new IdsKsMapping();
       $mapping->load($mapping_id);
-      if ($mapping->isSaved() && $mapping->path_origin && $mapping->path_destination) {
-        if (!($mapping->action || $mapping->relationship)) {
+      if ($mapping->isSaved() && $mapping->get('path_origin') && $mapping->get('path_destination')) {
+        if (!($mapping->get('action') || $mapping->get('relationship'))) {
           $mappings_applied[] = $mapping->getLabel();
-          $literals_original_path = IdsKsLiteral::getIds(array('original_path' => $mapping->path_origin));
-          //$versions_origin_ids = IdsKsVersionsLiteral::getIds(array('path' => $mapping->path_origin));
-          $versions_origin_ids = IdsKsVersionsLiteral::getParentsIds(array('literals' => $literals_original_path));
-          $versions_destination_ids = IdsKsVersionsLiteral::getIds(array('path' => $mapping->path_destination));
+          $literals_original_path = IdsKsLiteral::getIds(array('original_path' => $mapping->get('path_origin')));
+          $versions_origin_ids = IdsKsVersionsLiteral::getIds(array('literals' => $literals_original_path));
+          $versions_destination_ids = IdsKsVersionsLiteral::getIds(array('path' => $mapping->get('path_destination')));
           if (!empty($versions_origin_ids)) {
             foreach ($versions_origin_ids as $versions_origin_id) {
               //$versions_destination_id = 0;
@@ -553,57 +635,59 @@ function idskshub_apply_mappings($mappings_ids) {
               $versions_origin->load($versions_origin_id);
               $literals_destination = array();
               // we can't just change the path because there might be some literals that shouldn't be moved (because the attributes don't match, for instance).
-              foreach ($versions_origin->literals as $literal_origin) {
+              foreach ($versions_origin->get('literals') as $literal_origin) {
                 // If the source and path match.
-                if (isset($literal_origin) && ($literal_origin->original_path == $mapping->path_origin) && (empty($mapping->source) || ($mapping->source == $literal_origin->source))) {
+                if ($literal_origin && $literal_origin->get('original_path') == $mapping->get('path_origin') && (!$mapping->get('source') || $mapping->get('source')->getId() == $literal_origin->get('source')->getId())) {
                   // we check if the attributes match.
-                  $included_attrs_literal = ((empty($literal_origin->attributes) && empty($mapping->attributes_origin)) || !(array_udiff($mapping->attributes_origin, $literal_origin->attributes, 'idskshub_diff')));
+                  $included_attrs_literal = (!$literal_origin->get('attributes') && !$mapping->get('attributes_origin') || !(array_udiff($mapping->get('attributes_origin'), $literal_origin->get('attributes'), 'idskshub_diff')));
                   if ($included_attrs_literal) {
                     $literals_destination[$literal_origin->getId()] = $literal_origin;
                   }
                 }
               }
               // we see if there is already a versions literal with the new path in the item to which this versions literal belongs.
-              if (!empty($literals_destination) && ($items_ids = IdsKsItem::getParentsIds(array('versions_literals' => $versions_origin_id)))) {
-                $item_id = end($items_ids); // Each versions is only one item.
-                // if the 'mapped' versions literal is already in the item, we update it with the literals in the "old" versions literal.
-                $versions_literals_item = IdsKsItem::getChildrenIds($item_id, 'versions_literals');
-                if ($versions_mapped_item_ids = array_intersect($versions_destination_ids, $versions_literals_item)) { // The mapped path exists in the item.
-                  $versions_destination_id = end($versions_mapped_item_ids); // There should be only one versions literal for each mapped path in an item.
-                  $versions_destination = new IdsKsVersionsLiteral();
-                  $versions_destination->load($versions_destination_id);
-                  foreach ($literals_destination as $literal) { // Copy the literals to the existing versions.
-                    if (!($versions_destination->inLiterals($literal))) {
-                      $versions_destination->literals[] = $literal;
+              if (!empty($literals_destination) && ($items_ids = IdsKsItem::getIds(array('versions_literals' => $versions_origin_id)))) {
+                $item_id = end($items_ids); // Each versions is only in one item.
+                $item = new IdsKsItem();
+                $item->load($item_id);
+                if (!$mapping->get('type') || ($item->get('type') && $item->get('type')->getId() == $mapping->get('type')->getId())) {
+                  // if the 'mapped' versions literal is already in the item, we update it with the literals in the "old" versions literal.
+                  $versions_literals_item = IdsKsItem::getChildrenIds($item_id, 'versions_literals');
+                  if ($versions_mapped_item_ids = array_intersect($versions_destination_ids, $versions_literals_item)) { // The mapped path exists in the item.
+                    $versions_destination_id = end($versions_mapped_item_ids); // There should be only one versions literal for each mapped path in an item.
+                    $versions_destination = new IdsKsVersionsLiteral();
+                    $versions_destination->load($versions_destination_id);
+                    foreach ($literals_destination as $literal) { // Copy the literals to the existing versions.
+                      if (!($versions_destination->inLiterals($literal))) {
+                        $versions_destination->add('literals', $literal);
+                      }
+                    }
+                    $versions_destination->save();
+                    if (count($versions_origin->get('literals')) == count($literals_destination)) { // If all the literals are copied. There is no need to keep the old one.
+                      $versions_origin->delete(TRUE, FALSE); // We don't delete its literals, as they were moved.
+                    }
+                    else {
+                      // Some literals were not moved. We have to keep both versions, removing the ones to move from their old place.
+                      $versions_origin->deleteLiteralsByIds(array_keys($literals_destination), FALSE);
+                      $versions_origin->save();
                     }
                   }
-                  $versions_destination->save();
-                  if (count($versions_origin->literals) == count($literals_destination)) { // If all the literals are copied. There is no need to keep the old one.
-                    $versions_origin->delete(TRUE, FALSE); // We don't delete its literals, as they were moved.
-                  }
-                  else {
-                    // Some literals were not moved. We have to keep both versions, removing the ones to move from their old place.
-                    $versions_origin->deleteLiteralsByIds(array_keys($literals_destination), FALSE);
-                    $versions_origin->save();
-                  }
-                }
-                else { // There are no literals with the mapped path.
-                  if (count($versions_origin->literals) == count($literals_destination)) {  // All the literals have to be moved.
-                    $versions_origin->path = $mapping->path_destination; // We can just change the path of the existing versions.
-                    $versions_origin->save();
-                  }
-                  else {
-                    // We have to keep the old one (removing the copied literals). $versions_destination is new.
-                    $versions_origin->deleteLiteralsByIds(array_keys($literals_destination), FALSE);
-                    $versions_origin->save();
-                    $versions_destination = new IdsKsVersionsLiteral();
-                    $versions_destination->literals = array_values($literals_destination); // Remove NULLs.
-                    $versions_destination->path = $mapping->path_destination;
-                    $versions_destination->save();
-                    $item = new IdsKsItem();
-                    $item->load($item_id);
-                    $item->versions_literals[] = $versions_destination; // Add new versions to the item.
-                    $item->save();
+                  else { // There are no literals with the mapped path.
+                    if (count($versions_origin->get('literals')) == count($literals_destination)) {  // All the literals have to be moved.
+                      $versions_origin->set('path', $mapping->get('path_destination')); // We can just change the path of the existing versions.
+                      $versions_origin->save();
+                    }
+                    else {
+                      // We have to keep the old one (removing the copied literals). $versions_destination is new.
+                      $versions_origin->deleteLiteralsByIds(array_keys($literals_destination), FALSE);
+                      $versions_origin->save();
+                      $versions_destination = new IdsKsVersionsLiteral();
+                      $versions_destination->set('literals', array_values($literals_destination)); // Remove NULLs.
+                      $versions_destination->set('path', $mapping->get('path_destination'));
+                      $versions_destination->save();
+                      $item->add('versions_literals', $versions_destination); // Add new versions to the item.
+                      $item->save();
+                    }
                   }
                 }
               }
@@ -852,25 +936,27 @@ function idskshub_merge_items($items_ids, &$context) {
 // Generate paths to use a base for mappings
 function idskshub_paths_literals($item) {
   $csv = array();
-  foreach ($item->versions_literals as $vl) {
-    foreach ($vl->literals as $lit) {
-      $format_code = (isset($lit->source->default_format->code)) ? $lit->source->default_format->code : '';
-      $source_code = (isset($lit->source->code)) ? $lit->source->code : '';
-      $original_path = (isset($lit->original_path)) ? $lit->original_path : '';
-      if ($lit->attributes) {
-        $attributes = array();
-        foreach ($lit->attributes as $attribute) {
-          $attributes[] = $attribute->name . '=' . $attribute->value;
+  foreach ($item->get('versions_literals') as $vl) {
+    foreach ($vl->get('literals') as $lit) {
+      if ($lit) {
+        $format_code = ($lit->get('source')->default_format->get('code')) ? $lit->get('source')->default_format->get('code') : '';
+        $source_code = ($lit->get('source')->get('code')) ? $lit->get('source')->get('code') : '';
+        $original_path = ($lit->get('original_path')) ? $lit->get('original_path') : '';
+        if ($lit->get('attributes')) {
+          $attributes = array();
+          foreach ($lit->get('attributes') as $attribute) {
+            $attributes[] = $attribute->get('name') . '=' . $attribute->get('value');
+          }
+          if ($attributes) {
+            $attributes_str = implode(',', $attributes);
+          }
         }
-        if ($attributes) {
-          $attributes_str = implode(',', $attributes);
+        else {
+          $attributes_str = '';
         }
+        $mapped_path = ($vl->get('path')) ? $vl->get('path') : '';
+        $csv[] = "\"$format_code\",\"$source_code\",\"$original_path\",\"$attributes_str\",\"$mapped_path\",\"\",\"\"\n";
       }
-      else {
-        $attributes_str = '';
-      }
-      $mapped_path = (isset($vl->path)) ? $vl->path : '';
-      $csv[] = "\"$format_code\",\"$source_code\",\"$original_path\",\"$attributes_str\",\"$mapped_path\",\"\",\"\"\n";
     }
   }
   return $csv;
@@ -878,20 +964,20 @@ function idskshub_paths_literals($item) {
 
 function idskshub_paths_item($item) {
   $csv = idskshub_paths_literals($item);
-  if ($item->subitems) {
-    foreach ($item->subitems as $subitem) {
-      if ($item->root_attributes) {
-        foreach ($item->root_attributes as $attribute) {
-          if (preg_match('/\[(.+)\]:\[(.+)\]:(.+)/', $attribute->name, $matches)) {
+  if ($item->get('subitems')) {
+    foreach ($item->get('subitems') as $subitem) {
+      if ($item->get('root_attributes')) {
+        foreach ($item->get('root_attributes') as $attribute) {
+          if (preg_match('/\[(.+)\]:\[(.+)\]:(.+)/', $attribute->get('name'), $matches)) {
             $source_code = $matches[1];
             $original_path = $matches[2];
             $attr_name = $matches[3];
-            $attributes_str = $attr_name . '=' . $attribute->value;
+            $attributes_str = $attr_name . '=' . $attribute->get('value');
             $source = new IdsKsSource;
-            $source->code = $source_code;
+            $source->set('code', $source_code);
             $source->load();
-            $format_code = (isset($source->default_format->code)) ? $source->default_format->code : '';
-            $source_code = ($source->isSaved()) ? $source->code : '';
+            $format_code = ($source->get('default_format')->get('code')) ? $source->get('default_format')->get('code') : '';
+            $source_code = ($source->isSaved()) ? $source->get('code') : '';
             $csv[] = "\"$format_code\",\"$source_code\",\"$original_path\",\"$attributes_str\",\"$original_path\",\"\",\"\"\n";
           }
         }
@@ -930,10 +1016,9 @@ function idskshub_del($variable) {
 }
 
 function idskshub_diff($obj1, $obj2) {
-  $class1 = get_class($obj1);
-  $class2 = get_class($obj2);
   $equal = FALSE;
-  if ($class1 == $class2) {
+  if (is_a($obj1, 'IdsKsObject') && is_a($obj2, 'IdsKsObject')) {
+    $class1 = get_class($obj1);
     $equal = $class1::equal($obj1, $obj2);
   }
   if ($equal) {

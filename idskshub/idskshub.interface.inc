@@ -87,12 +87,18 @@ function eck__entity__form_edit_ids_ks_mapping_ids_ks_mapping_validate($form, &$
       idskshub_set_field_reference('field_mapping_attributes_origin', $atr->getId(), $form_state, $delta);
     }
   }
-  $field_mapping_action = idskshub_get_field_input('field_mapping_action', $form_state);
-  if (!empty($field_mapping_action[0]['value']) && !in_array($field_mapping_action[0]['value'], array_keys(idskshub_mapping_actions()))) {
-    form_set_error('field_mapping_action', t("@action is not a valid action.", array('@action' => $field_mapping_action[0]['value'])));    
+  $field_mapping_relationship = idskshub_get_field_input('field_mapping_relationship', $form_state);
+  if (is_numeric($field_mapping_relationship)) {
+    idskshub_set_field_value('field_mapping_action', 'RELATED_ITEM', $form_state);
+  }
+  else {
+    $field_mapping_action = idskshub_get_field_input('field_mapping_action', $form_state);
+    if (!empty($field_mapping_action[0]['value']) && !in_array($field_mapping_action[0]['value'], array_keys(idskshub_mapping_actions()))) {
+      form_set_error('field_mapping_action', t("@action is not a valid action.", array('@action' => $field_mapping_action[0]['value'])));    
+    }
   }
   idskshub_validate_paths('field_mapping_path_origin', $form, $form_state, TRUE, TRUE);
-  $destination_path_required = (empty($field_mapping_action[0]['value']) || !in_array($field_mapping_action[0]['value'], array_keys(idskshub_mapping_actions())));
+  $destination_path_required = (empty($field_mapping_action[0]['value']) && !is_numeric($field_mapping_relationship));
   idskshub_validate_paths('field_mapping_path_destination', $form, $form_state, FALSE, $destination_path_required);
 }
 
@@ -213,7 +219,7 @@ function idskshub_block($block_name) {
 // Returns an item's displayable fields (title, description), based on its type.
 function idskshub_item_display_field($id, $field, $source = NULL, $lang = IDSKS_DEFAULT_LANGUAGE) {
   if ($source) {
-    $source_code = $source->code;
+    $source_code = $source->get('code');
   }
   else {
     $source_code = '';
@@ -247,7 +253,7 @@ function idskshub_item_display_sources($id) {
 
 function idskshub_print_mapping_entity($entity) {
   $mapping = new IdsKsMapping();
-  $mapping->populate($entity);
+  $mapping->load($entity->identifier());
   return $mapping->getLabel();
 }
 
@@ -282,11 +288,11 @@ function idskshub_sources_options() {
       }
       else {
         if (isset($source_info['contributor'])) {
-          if (isset($source_info['contributor']->acronym)) {
-            $options[$id] = $source_info['contributor']->acronym;
+          if ($source_info['contributor']->get('acronym')) {
+            $options[$id] = $source_info['contributor']->get('acronym');
           }
-          elseif (isset($source_info['contributor']->name)) {
-            $options[$id] = $source_info['contributor']->name;
+          elseif ($source_info['contributor']->get('name')) {
+            $options[$id] = $source_info['contributor']->get('name');
           }
           else {
             $options[$id] = $id;
@@ -547,7 +553,7 @@ function idskshub_fetcher_import_sources(&$form, $sources) {
   $types = idskshub_valid_types();
   foreach (array_keys($sources) as $source_id) {
     if ($source_id) {
-      $feeds_ids = IdsKsFeed::getParentsIds(array('source' => $source_id));
+      $feeds_ids = IdsKsFeed::getIds(array('source' => $source_id));
       $field_name_origin = 'import_origin_' . $source_id;
       if (!empty($feeds_ids)) {
         $options_feeds = array();
@@ -555,7 +561,7 @@ function idskshub_fetcher_import_sources(&$form, $sources) {
           $feed = new IdsKsFeed();
           $feed->load($feed_id);
           if ($feed->isSaved()) {
-            $options_feeds[$feed->getId()] = $feed->name;
+            $options_feeds[$feed->getId()] = $feed->get('name');
           } 
         }
         $field_name_feed = 'feed_id_' . $source_id;
@@ -1395,7 +1401,7 @@ function idskshub_combine_items_confirm_form($form, $form_state) {
       foreach ($items_ids as $item_id) {
         $item = new IdsKsItem();
         $item->load($item_id);
-        if (isset($item->display_title)) {
+        if ($item->display_title) {
           $item = $item->display_title;
         }
         else {
@@ -1542,7 +1548,7 @@ function idskshub_newmapping_form($form, $form_state) {
     //'#title' => t('Mapped field'),
     '#description' => t('Please enter the destination path with the tags that form it separated by "/". (For instance: <i><b>archived</b></i>).<br>
       This field is required if no alternative action is selected.<br>
-      When possible, use <a href="@hub_fields_url" target="_new">existing hub fields</a>.
+      In the case of PREPROCESS mappings, enter here the name of the function to be called (this function should be defined in idskshub.callback.inc).
      ',
      array('@hub_fields_url' => '/hub-fields')),
     '#weight' => '45',
@@ -1721,24 +1727,28 @@ function idskshub_display_usedby($id, $type) {
   if ($id) {
     switch ($type) {
       case 'source':
-        $feeds_ids = IdsKsFeed::getParentsIds(array('source' => $id));
-        $mappings_ids = IdsKsMapping::getParentsIds(array('source' => $id));
-        $literals_ids = IdsKsLiteral::getParentsIds(array('source' => $id));
-        $track_changes_ids = IdsKsTrackChanges::getParentsIds(array('source' => $id));
+        $feeds_ids = IdsKsFeed::getIds(array('source' => $id));
+        $mappings_ids = IdsKsMapping::getIds(array('source' => $id));
+        $literals_ids = IdsKsLiteral::getIds(array('source' => $id));
+        $track_changes_ids = IdsKsTrackChanges::getIds(array('source' => $id));
         break;
       case 'contributor':
-        $sources_ids = IdsKsSource::getParentsIds(array('contributor' => $id));
+        $sources_ids = IdsKsSource::getIds(array('contributor' => $id));
         break;
       case 'type':
-        $items_ids = IdsKsItem::getParentsIds(array('type' => $id));
-        $feeds_ids = IdsKsFeed::getParentsIds(array('default_type' => $id));
+        $items_ids = IdsKsItem::getIds(array('type' => $id));
+        $feeds_ids = IdsKsFeed::getIds(array('default_type' => $id));
         break;
       case 'format':
-        $mappings_ids = IdsKsMapping::getParentsIds(array('format' => $id));
-        $feeds_ids = IdsKsFeed::getParentsIds(array('default_format' => $id));
+        $mappings_ids = IdsKsMapping::getIds(array('format' => $id));
+        $feeds_ids = IdsKsFeed::getIds(array('default_format' => $id));
+        break;
+      case 'related_item':
+        $rels_ids = IdsKsRelatedItem::getIds(array('referred_item' => $id));
+        $items_ids = IdsKsItem::getIds(array('related_items' => $rels_ids));
         break;
       case 'item':
-        $items_ids = IdsKsItem::getParentsIds(array('subitems' => $id));
+        $items_ids = IdsKsItem::getIds(array('subitems' => $id));
         break;
     }
     if (!empty($feeds_ids) || !empty($mappings_ids)  || !empty($literals_ids) || !empty($track_changes_ids) || !empty($items_ids) || !empty($sources_ids)) {

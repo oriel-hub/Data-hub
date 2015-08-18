@@ -58,6 +58,7 @@ class IdsKsRelatedItem extends IdsKsObject {
   public $relationship;
   public $referred_item;
   public $path;
+
 } // class IdsKsRelatedItem
 
 class IdsKsRelationship extends IdsKsObject {

@@ -69,12 +69,12 @@ class IdsKsMapping extends IdsKsObject {
 
   public static function createMappingFromStrings($path_origin, $path_destination, $format_code='', $source_code='', $type_name='', $attributes_origin='', $relationship_id=0, $action='') {
     $mapping = new IdsKsMapping();
-    $mapping->path_origin = $path_origin;
+    $mapping->set('path_origin', $path_origin);
     $attributes = array();
     if ($attributes_origin) {
       $attributes = IdsKsAttribute::getAttributesString($attributes_origin);
       if (!empty($attributes)) {
-        $mapping->attributes_origin = $attributes;
+        $mapping->set('attributes_origin', $attributes);
       }
     }
     $mappings = $mapping->getObjectsByProperties();
@@ -82,19 +82,22 @@ class IdsKsMapping extends IdsKsObject {
       // There are mappings for this origin. We have to see if we keep them or delete them if they are covered by the new one.
       foreach ($mappings as $old_mapping) {
         // If it exists for this format and source or this one is more generic we delete the old one.
-        $replace_format = (empty($format_code) || (isset($old_mapping->format) && $old_mapping->format->code === $format_code));
-        $replace_source = (empty($source_code) || (isset($old_mapping->source) && $old_mapping->source->code === $source_code));
-        $replace_type = (empty($type_name) || (isset($old_mapping->type) && $old_mapping->type->name === $type_name));
-        if  ($replace_format && $replace_source && $replace_type) {
-          // If the attributes are the same.
-          if (empty($attributes) && empty($old_mapping->attributes_origin)) {
-            $old_mapping->delete();
-          }
-          elseif (isset($old_mapping->attributes_origin)) {
-            sort($attributes);
-            sort($old_mapping->attributes_origin);
-            if ($old_mapping->attributes_origin == $attributes) {
+        // Except in the case of PREPROCESS mappings, which we allow to coexist with others (but not with other PREPROCESS mappings).
+        if (($old_mapping->get('action') != 'PREPROCESS' && $action != 'PREPROCESS') || ($old_mapping->get('action') == 'PREPROCESS' && $action == 'PREPROCESS')) {
+          $replace_format = (!$format_code || ($old_mapping->get('format') && $old_mapping->get('format')->get('code') === $format_code));
+          $replace_source = (!$source_code || ($old_mapping->get('source') && $old_mapping->get('source')->get('code') === $source_code));
+          $replace_type = (!$type_name || ($old_mapping->get('type') && $old_mapping->get('type')->get('name') === $type_name));
+          if  ($replace_format && $replace_source && $replace_type) {
+            // If the attributes are the same.
+            if (!$attributes && !$old_mapping->get('attributes_origin')) {
               $old_mapping->delete();
+            }
+            elseif ($old_mapping->get('attributes_origin')) {
+              sort($attributes);
+              sort($old_mapping->get('attributes_origin'));
+              if (IdsKsObject::equal($old_mapping->get('attributes_origin'), $attributes)) {
+                $old_mapping->delete();
+              }
             }
           }
         }
@@ -102,60 +105,65 @@ class IdsKsMapping extends IdsKsObject {
     }
     if ($format_code) {
       $format = new IdsKsFormat();
-      $format->code = $format_code;
+      $format->set('code', $format_code);
       $format->load();
       if ($format->getId()) {
-        $mapping->format = $format;
+        $mapping->set('format', $format);
       }
     }
     if ($source_code) {
       $source = new IdsKsSource();
-      $source->code = $source_code;
+      $source->set('code', $source_code);
       $source->load();
       if ($source->getId()) {
-        $mapping->source = $source;
+        $mapping->set('source', $source);
       }
     }
     if ($type_name) {
       $type = new IdsKsType();
-      $type->name = $type_name;
+      $type->set('name', $type_name);
       $type->load();
       if ($type->getId()) {
-        $mapping->type = $type;
+        $mapping->set('type', $type);
       }
     }
     if ($relationship_id) {
       $relationship = new IdsKsRelationship();
       $relationship->load($relationship_id);
-      if (isset($relationship->type)) {
-        $mapping->relationship = $relationship;
+      if ($relationship->get('type')) {
+        $mapping->set('relationship', $relationship);
       }
+      $mapping->set('action', 'RELATED_ITEM');
     }
-    if (in_array($action, array_keys(idskshub_mapping_actions()))) {
-      $mapping->action = $action;
+    elseif (in_array($action, array_keys(idskshub_mapping_actions()))) {
+      $mapping->set('action', $action);
     }
-    $mapping->path_destination = $path_destination;
+    $mapping->set('path_destination', $path_destination);
     $mapping->save();
     return $mapping;
   }
 
-  public static function getMapping($path_origin, $attributes = array(), $format = NULL, $source = NULL, $type = NULL) {
-    $mapping_found = NULL;
-    $mapping = new IdsKsMapping();
-    $mapping->path_origin = $path_origin;
+  public static function getMapping($path_origin, $attributes=array(), $format=NULL, $source=NULL, $type=NULL, $action='', $exclude_action='') {
+    $mapping_found = new IdsKsMapping;
+    $mapping = new IdsKsMapping;
+    $mapping->set('path_origin', $path_origin);
+    if ($action) {
+      $mapping->set('action', $action);
+    }
     $mappings = $mapping->getObjectsByProperties();
-    if (empty($mappings)) { // mapping not found. check if a mapping exists with a wildcard.
+    if (!$mappings) { // mapping not found. check if a mapping exists with a wildcard.
       $tag = array_pop(explode('/', $path_origin));
-      $mapping->path_origin = "*/$tag";
+      $mapping->set('path_origin', "*/$tag");
       $mappings = $mapping->getObjectsByProperties();
     }
-    if (!empty($mappings)) {
+    if ($mappings) {
       foreach ($mappings as $mapping) {
-        $format_matches = (empty($mapping->format) || ($mapping->format == $format));
-        $source_matches = (empty($mapping->source) || ($mapping->source == $source));
-        $type_matches = (empty($mapping->type) || ($mapping->type == $type));
-        if ($format_matches && $source_matches && $type_matches) {
-          if (!isset($mapping->attributes_origin) || !(array_udiff($mapping->attributes_origin, $attributes, 'idskshub_diff'))) { // the attributes of the mapping are included in the passed attributes.
+        $format_matches = (!$mapping->get('format') || $mapping->get('format')->getId() == $format->getId());
+        $source_matches = (!$mapping->get('source') || $mapping->get('source')->getId() == $source->getId());
+        $type_matches = (!$mapping->get('type') || $mapping->get('type')->getId() == $type->getId());
+        $action_matches = ($mapping->get('action') != $exclude_action);
+        if ($format_matches && $source_matches && $type_matches && $action_matches) {
+          if (!$mapping->get('attributes_origin') || !(array_udiff($mapping->get('attributes_origin'), $attributes, 'idskshub_diff'))) { // the attributes of the mapping are included in the passed attributes.
             $mapping_found = $mapping; // the destination is found. we stop looking.
             break;
           }
@@ -165,25 +173,64 @@ class IdsKsMapping extends IdsKsObject {
     return $mapping_found;
   }
 
+  public static function getMappings($path_origin, $attributes=array(), $format=NULL, $source=NULL, $type=NULL, $action='', $exclude_action='') {
+    $mappings_found = array();
+    $mapping = new IdsKsMapping;
+    $mapping->set('path_origin', $path_origin);
+    if ($action) {
+      $mapping->set('action', $action);
+    }
+    $mappings_field = $mapping->getObjectsByProperties();
+    $tag = array_pop(explode('/', $path_origin)); // check if a mapping exists with a wildcard.
+    $mapping->set('path_origin', "*/$tag");
+    $mappings_wildcard = $mapping->getObjectsByProperties();
+    $mappings = array_merge($mappings_field, $mappings_wildcard);
+    if ($mappings) {
+      foreach ($mappings as $mapping) {
+        $format_matches = (!$mapping->get('format') || $mapping->get('format')->getId() == $format->getId());
+        $source_matches = (!$mapping->get('source') || $mapping->get('source')->getId() == $source->getId());
+        $type_matches = (!$mapping->get('type') || $mapping->get('type')->getId() == $type->getId());
+        $action_matches = ($mapping->get('action') != $exclude_action);
+        if ($format_matches && $source_matches && $type_matches && $action_matches) {
+          if (!$mapping->get('attributes_origin') || !(array_udiff($mapping->get('attributes_origin'), $attributes, 'idskshub_diff'))) { // the attributes of the mapping are included in the passed attributes.
+            $mappings_found[] = $mapping;
+          }
+        }
+      }
+    }
+    return $mappings_found;
+  }
+
+  public static function isIgnore($path_origin, $attributes=array(), $format=NULL, $source=NULL, $type=NULL) {
+    $mapping = IdsKsMapping::getMapping($path_origin, $attributes, $format, $source, $type, 'IGNORE');
+    return !IdsKsObject::isEmpty($mapping);
+  }
+
+  public static function isPreprocess($path_origin, $attributes=array(), $format=NULL, $source=NULL, $type=NULL) {
+    $mapping = IdsKsMapping::getMapping($path_origin, $attributes, $format, $source, $type, 'PREPROCESS');
+    return $mapping->get('path_destination');
+  }
+
   public static function getMappingDestination($path_origin, $attributes = array(), $format = NULL, $source = NULL, $type = NULL) {
     $mapped = $path_origin;
-    if ($mapping = IdsKsMapping::getMapping($path_origin, $attributes, $format, $source, $type)) {
-      $mapped = $mapping->path_destination;
+    $mapping = IdsKsMapping::getMapping($path_origin, $attributes, $format, $source, $type);
+    if (!IdsKsObject::isEmpty($mapping)) {
+      $mapped = $mapping->get('path_destination');
     }
     return $mapped;
   }
 
   public function getLabel() {
     $attributes_str = '';
-    $format = (isset($this->format)) ? $this->format->code : '*';
-    $source = (isset($this->source)) ? $this->source->code : '*';
-    $type = (isset($this->type)) ? $this->type->name : '*';
-    $path_origin = (isset($this->path_origin)) ? $this->path_origin : '*';
-    $path_destination = (isset($this->path_destination)) ? $this->path_destination : '*';
-    if (isset($this->attributes_origin)) {
+    $format = ($this->get('format')) ? $this->get('format')->get('code') : '*';
+    $source = ($this->get('source')) ? $this->get('source')->get('code') : '*';
+    $type = ($this->get('type')) ? $this->get('type')->get('name') : '*';
+    $path_origin = ($this->get('path_origin')) ? $this->get('path_origin') : '*';
+    $path_destination = ($this->get('path_destination')) ? $this->get('path_destination') : '*';
+    if ($this->get('attributes_origin')) {
       $attributes = array();
-      foreach ($this->attributes_origin as $attribute) {
-        $attributes[] = $attribute->name . '=' . $attribute->value;
+      foreach ($this->get('attributes_origin') as $attribute) {
+        $attributes[] = $attribute->get('name') . '=' . $attribute->get('value');
       }
       if ($attributes) {
         $attributes_str = ' [' . implode(',', $attributes) . ']';

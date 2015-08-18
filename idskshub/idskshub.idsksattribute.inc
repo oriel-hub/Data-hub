@@ -14,8 +14,8 @@ class IdsKsAttribute extends IdsKsObject {
   public static function getAttribute($name, $value) {
     $attribute = new IdsKsAttribute();
     if ($name && $value) {
-      $attribute->name = $name;
-      $attribute->value = $value;
+      $attribute->set('name', $name);
+      $attribute->set('value', $value);
       $attribute->load();
       if (!($attribute->getId())) {
         $attribute->save();

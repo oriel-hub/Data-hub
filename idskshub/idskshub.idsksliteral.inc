@@ -15,7 +15,7 @@ class IdsKsLiteral extends IdsKsObject {
 
   public function addAttributesLiteral($attributes_objects) {
     foreach ($attributes_objects as $attribute) {
-      $this->attributes[] = $attribute;
+      $this->add('attributes', $attribute);
     }
   }
 
@@ -35,12 +35,12 @@ class IdsKsLiteral extends IdsKsObject {
     $lit_id = $this->getId();
     parent::delete();
     if ($delete_from_parent_versions) {
-      $parent_versions_ids = IdsKsVersionsLiteral::getParentsIds(array('literals' => $lit_id));
+      $parent_versions_ids = IdsKsVersionsLiteral::getIds(array('literals' => $lit_id));
       if (!empty($parent_versions_ids)) {
         $vlit = new IdsKsVersionsLiteral();
         $vlit->load($parent_versions_ids[0]);
         $literals = array();
-        foreach ($vlit->literals as $child) {
+        foreach ($vlit->get('literals') as $child) {
           if (isset($child)) {
             $literals[] = $child;
           }
@@ -49,7 +49,7 @@ class IdsKsLiteral extends IdsKsObject {
           $vlit->delete(TRUE);
         }
         else {
-          $vlit->literals = $literals;
+          $vlit->set('literals', $literals);
           $vlit->save();
         }
       }
