@@ -56,14 +56,14 @@ function okhub_retrieve_multiple_values(SimpleXMLElement &$xml_value, IdsKsSourc
   }
 }
 
-function okhub_split_values(SimpleXMLElement &$xml_value, IdsKsSource $source, &$xml_path, array $attributes) {
+function okhub_split_values(SimpleXMLElement &$xml_value, IdsKsSource $source, &$xml_path, array $attributes, $sep = '[,\;]') {
   $dom = new DOMDocument;
   $new_root = $dom->createElement('root');
   $dom->appendChild($new_root);
   $arr_path = explode('/', $xml_path); // We use the same element to add the splitted values.
   $tag = array_pop($arr_path);
   $xml_path = implode('/', $arr_path);
-  foreach (preg_split('/\s*[,\;]\s*/', (string)$xml_value) as $value) {
+  foreach (preg_split('/\s*'.$sep.'\s*/', (string)$xml_value) as $value) {
     $child = $dom->createElement($tag, $value);
     $new_root->appendChild($child);
   }
@@ -74,6 +74,10 @@ function okhub_split_values(SimpleXMLElement &$xml_value, IdsKsSource $source, &
   }
 }
 
+
+function okhub_split_slash_values(SimpleXMLElement &$xml_value, IdsKsSource $source, &$xml_path, array $attributes) {
+  okhub_split_values($xml_value, $source, $xml_path, $attributes, '\/');
+}
 
 // This function checks that the element contains some alphanumeric character(s) in it or sets it to NULL so the value is skipped.
 function okhub_check_alphanumeric(SimpleXMLElement &$xml_value, IdsKsSource $source, &$xml_path, array $attributes) {

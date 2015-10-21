@@ -78,6 +78,11 @@ function eck__entity__form_add_ids_ks_mapping_ids_ks_mapping_validate($form, &$f
   }
   idskshub_validate_paths('field_mapping_path_origin', $form, $form_state, TRUE, TRUE);
   idskshub_validate_paths('field_mapping_path_destination', $form, $form_state, FALSE, TRUE);
+  $field_mapping_action = idskshub_get_field_input('field_mapping_action', $form_state);
+  $field_mapping_relationship = idskshub_get_field_input('field_mapping_relationship', $form_state);
+  if (!empty($field_mapping_action[0]['value']) && $field_mapping_action[0]['value'] == 'RELATED_ITEM' && !is_numeric($field_mapping_relationship)) {
+    form_set_error('field_mapping_relationship', t("Please indicate the relationship."));
+  }
 }
 
 // TODO: Implement editing form (with additional validations).
@@ -88,18 +93,26 @@ function eck__entity__form_edit_ids_ks_mapping_ids_ks_mapping_validate($form, &$
     }
   }
   $field_mapping_relationship = idskshub_get_field_input('field_mapping_relationship', $form_state);
+  $field_mapping_action = idskshub_get_field_input('field_mapping_action', $form_state);
   if (is_numeric($field_mapping_relationship)) {
     idskshub_set_field_value('field_mapping_action', 'RELATED_ITEM', $form_state);
   }
   else {
-    $field_mapping_action = idskshub_get_field_input('field_mapping_action', $form_state);
     if (!empty($field_mapping_action[0]['value']) && !in_array($field_mapping_action[0]['value'], array_keys(idskshub_mapping_actions()))) {
       form_set_error('field_mapping_action', t("@action is not a valid action.", array('@action' => $field_mapping_action[0]['value'])));    
     }
   }
-  idskshub_validate_paths('field_mapping_path_origin', $form, $form_state, TRUE, TRUE);
-  $destination_path_required = (empty($field_mapping_action[0]['value']) && !is_numeric($field_mapping_relationship));
+  if (!empty($field_mapping_action[0]['value']) && $field_mapping_action[0]['value'] == 'RELATED_ITEM' && !is_numeric($field_mapping_relationship)) {
+    form_set_error('field_mapping_relationship', t("Please indicate the relationship."));
+  }
+  if (!empty($field_mapping_action[0]['value']) && $field_mapping_action[0]['value'] == 'PREPROCESS') {
+    $destination_path_required = TRUE;
+  }
+  else {
+    $destination_path_required = (empty($field_mapping_action[0]['value']) && !is_numeric($field_mapping_relationship));
+  }
   idskshub_validate_paths('field_mapping_path_destination', $form, $form_state, FALSE, $destination_path_required);
+  idskshub_validate_paths('field_mapping_path_origin', $form, $form_state, TRUE, TRUE);
 }
 
 function eck__entity__form_add_ids_ks_type_ids_ks_type_validate($form, &$form_state) {
@@ -131,11 +144,21 @@ function eck__entity__form_edit_ids_ks_format_ids_ks_format_validate($form, &$fo
 function eck__entity__form_add_ids_ks_source_ids_ks_source_validate($form, &$form_state) {
   idskshub_validate_slug('field_source_code', 'field_source_name', $form, $form_state);
   idskshub_validate_paths('field_source_identifiers', $form, $form_state);
+  $field_is_external = idskshub_get_field_input('field_is_external', $form_state);
+  $field_endpoint = idskshub_get_field_input('field_endpoint', $form_state);
+  if ($field_is_external && (!isset($field_endpoint[0]['value']) || filter_var($field_endpoint[0]['value'], FILTER_VALIDATE_URL) === FALSE)) {
+    form_set_error('field_endpoint', t("A valid endpoint URL is required for external sources."));    
+  }
 }
 
 function eck__entity__form_edit_ids_ks_source_ids_ks_source_validate($form, &$form_state) {
   idskshub_validate_slug('field_source_code', 'field_source_name', $form, $form_state);
   idskshub_validate_paths('field_source_identifiers', $form, $form_state);
+  $field_is_external = idskshub_get_field_input('field_is_external', $form_state);
+  $field_endpoint = idskshub_get_field_input('field_endpoint', $form_state);
+  if ($field_is_external && (!isset($field_endpoint[0]['value']) || filter_var($field_endpoint[0]['value'], FILTER_VALIDATE_URL) === FALSE)) {
+    form_set_error('field_endpoint', t("A valid endpoint URL is required for external sources."));    
+  }
 }
 
 function idskshub_validate_paths($field_path, $form, &$form_state, $wildcard=FALSE, $required=FALSE) {
@@ -753,6 +776,7 @@ function idskshub_fetcher_form($form, $form_state) {
     '#options' => array(
       'incremental' => t('Incrementally add new content from the source to the one present in existing items') . '<small><i> (' . t('partial updates') . ')</i></small>',
       'replace' => t('Replace all content from the source in existing items with the new one being imported') . '<small><i> (' . t('total updates') . ')</i></small>',
+      'noupdate' => t('Do not update existing items from the source') . '<small><i> (' . t('no updates') . ')</i></small>',
     ),
     '#weight' => '60',
     '#states' => array(
@@ -1126,11 +1150,6 @@ function idskshub_content_mapping_identifiers_fields(&$form, $identifiers_paths,
       $compound = $info[$id_source_or_type]['compound_key'];
       if (!$compound) {
         $identifier_field_name = 'identifier_' . $num_item . '---' . $type . '---' . $id_source_or_type;
-  /*
-        $disabled = array(
-          ':input[name="' . $identifier_field_name . '"]' => array('value' => 0),
-          );
-  */
         $required = array(
           ':input[name="' . $identifier_field_name . '"]' => array('empty' => FALSE),
           );
@@ -1299,7 +1318,7 @@ function idskshub_content_mapping_form($form, $form_state) {
   idskshub_content_mapping_identifiers_fields($form, $identifiers_types, $types_info, $use_types_identifiers, '2', 'type');
   $form['actions']['next'] = array(
     '#type' => 'submit',
-    '#value' => t('Create mapping'),
+    '#value' => t('Create combined item'),
     '#weight' => 100,
     '#prefix' => '<div style="float:right;">',
     '#suffix' => '</div>', 
@@ -1371,6 +1390,227 @@ function idskshub_content_mapping_form_submit($form, &$form_state) {
   IdsKsItem::mapItems($type_id, $source1_id, $source2_id, $identifiers);
 }
 
+/**
+* Definition of the upload data mappings forms.
+*/
+
+function idskshub_upload_data_mappings_identifiers_fields(&$form, $identifiers_paths, $num_source) {
+  $group_source = 'group_source' . $num_source;
+  foreach ($identifiers_paths as $id_source => $identifiers_types) {
+    foreach ($identifiers_types as $id_type => $identifiers) {
+      $visibility = array(
+          ':input[name="source' . $num_source . '"]' => array('value' => $id_source),
+          ':input[name="type' . $num_source . '"]' => array('value' => $id_type),
+          );
+      $identifier_field_name = 'identifier-' . $num_source . '---source-' . $id_source . '---type-' . $id_type;
+      $required = array(
+        ':input[name="' . $identifier_field_name . '"]' => array('empty' => FALSE),
+        );
+      $form[$group_source][$identifier_field_name] = array(
+        '#title' => t('Identified by'),
+        '#multiple' => '0',
+        '#type' => 'select',
+        '#options' => $identifiers,
+        '#default_value' => 0,
+        '#required' => FALSE,
+        '#weight' => 20,
+        '#states' => array(
+          'visible' => $visibility,
+          ),
+      );
+    }
+  }
+}
+
+// Content-mapping form.
+function idskshub_upload_data_mappings_form($form, $form_state) {
+  $types = idskshub_get_types_ids();
+  $sources = array();
+  $identifiers_sources = array();
+  $sources_info = IdsKsObject::getArrayObjects('IdsKsSource' , array('name', 'identifiers'));
+  foreach ($types as $type_id => $type_name) {
+    $type_name_lower = strtolower($type_name);
+    foreach ($sources_info as $source_id => $source_info) {
+      if (!empty($source_info['identifiers'])) {
+        $sources[$source_id] = $source_info['name'];
+        foreach ($source_info['identifiers'] as $identifier) {
+          if (preg_match('/(\w+)\s*:\s*(\w+)/', $identifier, $matches)) {
+            if ($matches[1]==$type_name_lower) {
+              $identifier = $matches[2];
+              $identifiers_sources[$source_id][$type_id][$identifier] = $identifier;
+            }
+          }
+          else {
+            $identifiers_sources[$source_id][$type_id][$identifier] = $identifier;
+          }
+        }
+      }
+    }
+  }
+  asort($sources);
+  // Set encoding to UTF-8.
+  $form['#attributes']['accept-charset'] = 'UTF-8';
+
+  // First source
+  $form['group_source1'] = array(
+    '#type' => 'fieldset', 
+    '#title' => t('First source'), 
+    '#weight' => 10, 
+    '#collapsible' => FALSE, 
+    '#attributes' => array(
+      'class' => array('form-content-mappings-left'),
+    ),
+  );
+  // Type of items for source 1.
+  $form['group_source1']['type1'] = array(
+    '#title' => t('Items type') . ' (<a href="' . url('types') . '">' . t('view types') . '</a>)',
+    '#type' => 'select',
+    '#options' => $types,
+    '#multiple' => '0',
+    '#weight' => 10,
+  );
+  // Source for content 1.
+  $form['group_source1']['source1'] = array(
+    '#title' => t('Source') . ' (<a href="' . url('sources') . '">' . t('view sources') . '</a>)',
+    '#multiple' => '0',
+    '#type' => 'select',
+    '#options' => $sources,
+    '#weight' => 15,
+    '#description' => t('If there are no identifiers defined for the source, the type\'s identifiers are used.'),
+  );
+  idskshub_upload_data_mappings_identifiers_fields($form, $identifiers_sources, '1');
+  $form['group_source1']['create1'] = array(
+    '#type' => 'checkboxes',
+    '#options' => array('create' => 'Create new items'),
+    '#multiple' => '0',
+    '#weight' => '30',
+    '#description' => t('If checked, the items that are not found in the hub will be created using the uploaded values for identifiers and labels. If not checked, the non-existing items will be ignored.'),
+  );
+  $form['group_source1']['lang1'] = array(
+    '#title' => t('Labels\' language'),
+    '#type' => 'select',
+    '#multiple' => '0',
+    '#options' => array(''=>'Use the source\'s default language') + idskshub_supported_languages(),
+    '#weight' => '40',
+    '#states' => array(
+      'visible' => array(
+        ':input[name="create1[create]"]' => array('checked' => TRUE),
+      ),
+    ),
+  );
+  // Second item
+  $form['group_source2'] = array(
+    '#type' => 'fieldset', 
+    '#title' => t('Second source'), 
+    '#weight' => 20, 
+    '#collapsible' => FALSE, 
+    '#attributes' => array(
+      'class' => array('form-content-mappings-right'),
+    ),
+  );
+  // Type of items for source 1.
+  $form['group_source2']['type2'] = array(
+    '#title' => t('Items type') . ' (<a href="' . url('types') . '">' . t('view types') . '</a>)',
+    '#type' => 'select',
+    '#options' => $types,
+    '#multiple' => '0',
+    '#weight' => 10,
+  );
+
+  // Source for content 2.
+  $form['group_source2']['source2'] = array(
+    '#title' => t('Source') . ' (<a href="' . url('sources') . '">' . t('view sources') . '</a>)',
+    '#multiple' => '0',
+    '#type' => 'select',
+    '#options' => $sources,
+    '#weight' => 15,
+    '#description' => t('If there are no identifiers defined for the source, the type\'s identifiers are used.'),
+  );
+  idskshub_upload_data_mappings_identifiers_fields($form, $identifiers_sources, '2'); 
+  $form['group_source2']['create2'] = array(
+    '#type' => 'checkboxes',
+    '#options' => array('create' => 'Create new items'),
+    '#multiple' => '0',
+    '#weight' => '30',
+    '#description' => t('If checked, the items that are not found in the hub will be created using the uploaded values for identifiers and labels. If not checked, the non-existing items will be ignored.'),
+  );
+  $form['group_source2']['lang2'] = array(
+    '#title' => t('Labels\' language'),
+    '#type' => 'select',
+    '#multiple' => '0',
+    '#options' => array(''=>'Use the source\'s default language') + idskshub_supported_languages(),
+    '#weight' => '40',
+    '#states' => array(
+      'visible' => array(
+        ':input[name="create2[create]"]' => array('checked' => TRUE),
+      ),
+    ),
+  );
+
+  $form['upload'] = array(
+    '#type' => 'fieldset', 
+    '#weight' => 50, 
+    '#attributes' => array('style' => array('width:930px;')),
+  );
+  $form['upload']['replace'] = array(
+    '#title' => t('If the items are already related'),
+    '#type' => 'select',
+    '#options' => array('replace'=>'Replace the relationship with the new one', 'keep'=>'Keep the existing relationship'),
+    '#multiple' => '0',
+    '#weight' => 60,
+  );
+  $form['upload']['file'] = array(
+    '#title' => t('Select file'),
+    '#description' => 
+      t('Upload a comma-separated CSV file with one mapping per row.') . '<br>' .  
+      t('The second column must hold the identifier value of the first source, the third column must hold the relationship code and the fifth column must hold the identifier value of the second source.') . '<br>' .
+      t('The first and fourth columns typically hold the item\'s labels but are optional and will not be used to establish the relationships.') . '<br>' .
+      t('Lines beginning with the # character will be ignored and can be used to include comments.') . '<br>' .
+      t('Example (mapping between BRIDGE and Observaction): <ul><li><i><b>"Conflict, peace and security",C1534,exactMatch,,Conflits</b></i></ul>') . '<br>',
+    '#type' => 'managed_file',
+    '#upload_validators' => array('file_validate_extensions' => array('csv')),
+    '#weight' => 70,
+    '#required' => '1',
+  );
+  $form['upload']['next'] = array(
+    '#type' => 'submit',
+    '#value' => t('Create relationships'),
+    '#weight' => 100,
+  );
+  return $form;
+}
+
+/**
+* Implements hook_form_validate().
+*/
+function idskshub_upload_data_mappings_form_validate($form, &$form_state) {
+  $form_values = $form_state['values'];
+  $identifiers = array();
+  $identifiers[$form_values['source1']] = $form_values['identifier-1---source-'.$form_values['source1'].'---type-'.$form_values['type1']];
+  $identifiers[$form_values['source2']] = $form_values['identifier-2---source-'.$form_values['source2'].'---type-'.$form_values['type2']];
+  $form_state['values']['identifiers'] = $identifiers;
+}
+
+/**
+* Implements hook_form_submit().
+*/
+function idskshub_upload_data_mappings_form_submit($form, &$form_state) {
+  $fid = $form_state['values']['file'];
+  $identifiers = $form_state['values']['identifiers'];
+  $type1_id = $form_state['values']['type1'];
+  $type2_id = $form_state['values']['type2'];
+  $source1_id = $form_state['values']['source1'];
+  $source2_id = $form_state['values']['source2'];
+  $create1 = $form_state['values']['create1']['create'];
+  $create2 = $form_state['values']['create2']['create'];
+  $lang1 = $form_state['values']['lang1'];
+  $lang2 = $form_state['values']['lang2'];
+  $replace = $form_state['values']['replace'];
+  //debug($form_state['values'],'values');
+  idskshub_create_relationships_file($fid, $source1_id, $source2_id, $identifiers, $type1_id, $type2_id, $create1, $create2, $lang1, $lang2, $replace);
+}
+
+/* Combine items forms */
 
 function idskshub_combine_items_form($form, $form_state) {
   $form['#action'] = url('combine-items-confirm');
@@ -1381,8 +1621,6 @@ function idskshub_combine_items_form($form, $form_state) {
   $form['actions']['next'] = array(
     '#type' => 'submit',
     '#value' => t('Combine selected items'),
-//    '#prefix' => '<div style="float:right;">',
-//    '#suffix' => '</div>', 
     '#weight' => 30,
     );
   return $form;
@@ -1614,6 +1852,12 @@ function idskshub_newmapping_form_validate($form, &$form_state) {
   }
   else {
       form_set_error('path_origin', t('The origin path is not valid.'));
+  }
+  if ($form_state['values']['action'] == 'RELATED_ITEM' && !$form_state['values']['relationship']) {
+    form_set_error('relationship', t("Please indicate the relationship."));
+  }
+  if ($form_state['values']['action'] == 'PREPROCESS' && !$form_state['values']['path_destination']) {
+    form_set_error('path_destination', t("Please indicate the callback function."));
   }
 }
 

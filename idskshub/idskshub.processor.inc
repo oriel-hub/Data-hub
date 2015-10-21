@@ -52,8 +52,6 @@ class IdsKsProcessor {
   }
 
   //Process in batch.
-//  public static function batchProcessItems($xml_items, $item_path, $source, $feed, $format, $type_name, $mode, $semantic, $existing_items, $update_mode, $allow_multiple, $force_import, $root_file_attributes, &$context) {
-//    $items = array_map('simplexml_load_string', $xml_items);    
   public static function batchProcessItems($items, $item_path, $source, $feed, $format, $type_name, $mode, $semantic, $existing_items, $update_mode, $allow_multiple, $force_import, $root_file_attributes, &$context) {
     if (!isset($context['sandbox']['progress'])) {
       $context['sandbox']['progress'] = 0;
@@ -136,49 +134,62 @@ class IdsKsProcessor {
       }
       // We set the display_title so we can use it to identify existing items.
       $new_item->setDisplayTitle();
-      // if the item does not exist, we save the newly created item. If it exists, we update the values for this source.
+      // if the item does not exist, we save the newly created item.
       $items_ids = $new_item->getDuplicatesBySource($source);
-      if ($found_by_source = !empty($items_ids)) {
-        $update_existing = TRUE;
+      $found_by_source = !empty($items_ids);
+      $update_existing = $found_by_source;
+      if ($found_by_source && $update_mode == 'noupdate') {
+        $display = 'skipped';
       }
       else {
-        $items_ids = $new_item->getDuplicatesByType();
-        $update_existing = $new_item->get('type')->get('update_existing');
-      }
-      if (empty($items_ids)) { // The item is new.
-        $item = $new_item;
-        $display = 'imported';
-      }
-      else {
-        if ($update_existing) { // Update existing item.
-          if (count($items_ids) > 1) {
-            //IdsKsItem::mergeMultipleItemsById($items_ids);
-            $merge_candidates = idskshub_get('merge_candidates', array());
-            $merge_candidates[] = $items_ids;
-            idskshub_set('merge_candidates', $merge_candidates); // TODO: Add administrative interface to show and choose to merge.
-            trigger_error(t('Potentially duplicated items found. Please consider merging them: @item_ids.', array('@item_ids' => implode(',', $items_ids))));
-          }
-          $item_id = array_shift($items_ids); // the first id will be the item's, if there is only one, or the id of the merged item if mergeMultipleItemsById() is enabled.
-          if ($item_id) {
-            $item = new IdsKsItem();
-            $item->load($item_id);
-            if ($existing_items == 'update_existing' || (!$found_by_source && !$item->hasContentFromSource($source->getId()))) {
-              $item->updateSourceValues($new_item, $source, $update_mode, $allow_multiple);
-              $display = 'updated';
-            }
-            else {
-              $display = 'unchanged';
-            }
-          }
+        if (!$found_by_source) {
+          $items_ids = $new_item->getDuplicatesByType();
+          $update_existing = $new_item->get('type')->get('update_existing');
         }
-        else { // Create new item and add "same as" links to existing items.
+        if (empty($items_ids)) { // The item is new.
           $item = $new_item;
-          $display = 'imported and linked to existing items';
-          // Get "same as" relationship based on the item's type.
-          $same_as_rel = new IdsKsRelationship;
-          if ($item->get('type')->get('name')) {
-            $same_as_rel->set('code', 'same_as_' . strtolower($item->get('type')->get('name')));
+          $display = 'imported';
+        }
+        else { //If it exists, we update the values for the source or create for new source and link.
+          if ($update_existing) { // Update existing item.
+            if (count($items_ids) > 1) {
+              //IdsKsItem::mergeMultipleItemsById($items_ids);
+              $merge_candidates = idskshub_get('merge_candidates', array());
+              $merge_candidates[] = $items_ids;
+              idskshub_set('merge_candidates', $merge_candidates); // TODO: Add administrative interface to show and choose to merge.
+              trigger_error(t('Potentially duplicated items found. Please consider merging them: @item_ids.', array('@item_ids' => implode(',', $items_ids))));
+            }
+            $item_id = array_shift($items_ids); // the first id will be the item's, if there is only one, or the id of the merged item if mergeMultipleItemsById() is enabled.
+            if ($item_id) {
+              $item = new IdsKsItem();
+              $item->load($item_id);
+              if ($existing_items == 'update_existing' || (!$found_by_source && !$item->hasContentFromSource($source->getId()))) {
+                $item->updateSourceValues($new_item, $source, $update_mode, $allow_multiple);
+                $display = 'updated';
+              }
+              else {
+                $display = 'unchanged';
+              }
+            }
+          }
+          else { // Create new item and add "same as" links to existing items.
+            $item = $new_item;
+            $display = 'imported and linked to existing items';
+            // Get "same as" relationship based on the item's type.
+            $same_as_rel = new IdsKsRelationship;
+            $same_as_rel->set('code', IDSKS_DEFAULT_MAPPING_RELATIONSHIP);
             $same_as_rel->load();
+            //----- Leaving this temporarily for backward compatibility, until the relationships are updated in the live server ---------------
+            if ($same_as_rel->getId()) {
+              $inverse_rel_code = $same_as_rel->get('inverse');
+            }
+            elseif ($item->get('type')->get('name')) {
+              $rel_code = 'same_as_' . strtolower($item->get('type')->get('name'));
+              $same_as_rel->set('code', $rel_code);
+              $same_as_rel->load();
+              $inverse_rel_code = $rel_code;
+            }
+            //---------------------------------------------------------------------------------------------------------------------------------
             if ($same_as_rel->getId()) {
               foreach ($items_ids as $item_id) {
                 $rel_item = new IdsKsItem;
@@ -194,22 +205,30 @@ class IdsKsProcessor {
             }
           }
         }
-      }
-      $item->saveSubitems();
-      $item->saveRelatedItems();
-      $item->addChanges($source, $serialized_item, $hash);
-      $item->addSemanticData($semantic);
-      $item->saveItem();
-      $item_id = $item->getId();      
-      if ($item_id && !$update_existing && !empty($related_items) && $same_as_rel->getId()) { // In this case there are items and we have to create "same as" links from them.
-        foreach ($related_items as $rel_item) {
-          $new_rel_item = new IdsKsRelatedItem;
-          $new_rel_item->set('referred_item', $item);
-          $new_rel_item->set('relationship', $same_as_rel);
-          $new_rel_item->set('source', $okhub_source);
-          $new_rel_item->save();
-          $rel_item->add('related_items', $new_rel_item);
-          $rel_item->save();
+        $item->saveSubitems();
+        $item->saveRelatedItems();
+        $item->addChanges($source, $serialized_item, $hash);
+        $item->addSemanticData($semantic);
+        $item->saveItem();
+        $item_id = $item->getId();
+        if ($item_id && !$update_existing && !empty($related_items)) {
+          // In this case there are items and we have to create "same as" links from them.
+          if ($inverse_rel_code) {
+            $inverse_rel = new IdsKsRelationship;
+            $inverse_rel->set('code', $inverse_rel_code);
+            $inverse_rel->load();
+            if ($inverse_rel->getId()) {
+              foreach ($related_items as $rel_item) {
+                $new_rel_item = new IdsKsRelatedItem;
+                $new_rel_item->set('referred_item', $item);
+                $new_rel_item->set('relationship', $inverse_rel);
+                $new_rel_item->set('source', $okhub_source);
+                $new_rel_item->save();
+                $rel_item->add('related_items', $new_rel_item);
+                $rel_item->save();
+              }
+            }
+          }
         }
       }
     }

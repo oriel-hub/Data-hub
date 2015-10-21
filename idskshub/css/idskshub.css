@@ -1,5 +1,9 @@
 /* IDS KS Importer */
 
+/* Homepage updates bullet */
+.updates-list {
+    list-style-image: url('/sites/all/themes/skeletontheme/images/arrow-blue.png');
+}
 .view-ids-ks-literal .views-table {
   border: 1px solid lightgrey;
   border-collapse: separate;
@@ -330,4 +334,18 @@
   position: relative;
   top: -30px;
   width: 80px;
+}
+
+.sources_header {
+  position: relative;
+  top: -50px;
+  margin-top: 60px;
+}
+
+#views-form-ids-ks-sources-page-1 #edit-select {
+  left: -192px;
+}
+
+#edit-select input {
+  margin: 4px;
 }

@@ -164,6 +164,14 @@ class IdsKsObject {
     return (entity_load_single($this->getEntityType(), $this->getId())) ? TRUE : FALSE;
   }
 
+  public function getLabel() {
+    $label = '';
+    if ($entity = entity_load_single($this->getEntityType(), $this->getId())) {
+      $label = $entity->label();
+    }
+    return $label;
+  }
+
   public function getObjectsByProperties() {
     $objects = array();
     $entities = $this->getEntitiesByProperties();

@@ -54,45 +54,78 @@ class IdsKsParser {
     $root_file_attributes = array();
     $total_elements = 0;
     $file_contents = file_get_contents($file_path);
+    $file_contents = trim($file_contents);
     $file_contents = mb_convert_encoding($file_contents, 'UTF-8');
     $file_contents = self::changeNamespaces($file_contents);
     // decode entities before cleaning the HTML up.
-    // This might generate problems with the XML parser with badly formed HTML (making it skip the rest of the file). TODO: Use the tidy lib to clean the HTML code.
+    // This might generate problems with the XML parser with badly formed HTML (making it skip the rest of the file).
+    // TODO: Use the tidy lib to clean included HTML code. To install Tidy PHP common should be updated in the system.
     /*
     $file_contents = html_entity_decode($file_contents);
     $file_contents = self::removeHTML($file_contents);
     $file_contents = self::changeAllowedHTML($file_contents);
     */
     if (!empty($file_contents)) {
-      $dom = new SmartDOMDocument;
-      $dom->recover = TRUE;
-      $dom->loadHTML($file_contents); // using this instead of loadXML in order to be more flexible in the accepted input.
-      $xml_obj = simplexml_import_dom($dom);
-      $item_path = '';
-      $root_path = '';
-      $xml_root = '';
-      if ($format->get('root_path')) {
-        $root_path = $format->get('root_path');
-      }
-      if ($format->get('item_paths')) {
-        $item_paths = $format->get('item_paths');
-      }
-      if ($root_path) {
-        $root_string = '//' . idskshub_change_namespace($root_path);
-        $root = $xml_obj->xpath($root_string);
-        if (!empty($root)) {
-          $xml_root = end($root);
-          $root_file_attributes = (array) $xml_root->attributes();
-        }
-      }
-      if (!empty($item_paths)) {
-        foreach ($item_paths as $path) {
-          if ($items = idskshub_get_xml_values($xml_obj, $path, $root_path)) {            
-            $item_path = $path;
-            break;
+      $xml = new DOMDocument;
+      $xml->recover = TRUE;
+      if ($xml_loaded_ok = $xml->loadXML($file_contents, LIBXML_NOCDATA|LIBXML_ERR_NONE)) {
+        if ($format->get('xslt_file')) {
+          if ($file_xslt = file_load($format->get('xslt_file'))) {
+            $file_xslt_path = drupal_realpath($file_xslt->uri);
+            $xsl = new DOMDocument;
+            $xsl->substituteEntities = true;
+            if ($xsl->load($file_xslt_path)) {
+              $proc = new XSLTProcessor;
+              $proc->importStyleSheet($xsl); // attach the xsl rules
+              $file_contents = $proc->transformToXML($xml);
+              $xml_loaded_ok = $xml->loadXML($file_contents, LIBXML_NOCDATA|LIBXML_ERR_NONE);
+              //file_put_contents('/tmp/transformed_'.time().'.xml', $file_contents);
+            }
+            else {
+              drupal_set_message(t('The XSLT file @file could not be loaded. Please check the file format.', array('@file'=>$file_xslt_path)), 'warning');
+            }
+          }
+          else {
+            drupal_set_message(t('The XSLT tranformations could not be applied to file @file. The file was not loaded.', array('@file'=>$file_path)), 'warning');
           }
         }
-        $total_elements = count($xml_obj->xpath('//*')); // Total XML elements, to know the volume (items, subitems, literals) to import and switch to background.
+        $dom = new SmartDOMDocument; // Quick fix to continue loading the file as HTML (which converts tags to lowercase, etc). For backward compatibility.
+        $dom->recover = TRUE;
+        if ($xml_loaded_ok && $dom->loadHTML($xml->saveHTML())) {
+          $xml_obj = simplexml_import_dom($dom);
+          $item_path = '';
+          $root_path = '';
+          $xml_root = '';
+          if ($format->get('root_path')) {
+            $root_path = $format->get('root_path');
+          }
+          if ($format->get('item_paths')) {
+            $item_paths = $format->get('item_paths');
+          }
+          if ($root_path) {
+            $root_string = '//' . idskshub_change_namespace($root_path);
+            $root = $xml_obj->xpath($root_string);
+            if (!empty($root)) {
+              $xml_root = end($root);
+              $root_file_attributes = (array) $xml_root->attributes();
+            }
+          }
+          if (!empty($item_paths)) {
+            foreach ($item_paths as $path) {
+              if ($items = idskshub_get_xml_values($xml_obj, $path, $root_path)) {            
+                $item_path = $path;
+                break;
+              }
+            }
+            $total_elements = count($xml_obj->xpath('//*')); // Total XML elements, to know the volume (items, subitems, literals) to import and switch to background.
+          }
+        }
+        else {
+          drupal_set_message(t('The XML file @file could not be loaded as HTML. Please check the file format.', array('@file'=>$file_path)), 'warning');
+        }
+      }
+      else {
+        drupal_set_message(t('The XML file @file could not be loaded. Please check the file format.', array('@file'=>$file_path)), 'warning');
       }
     }
     return array($item_path, $items, $total_elements, $root_file_attributes);

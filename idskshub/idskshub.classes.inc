@@ -51,6 +51,7 @@ class IdsKsFormat extends IdsKsObject {
   public $item_paths;
   public $root_path;
   public $type_path;
+  public $xslt_file;
 } // class IdsKsFormat
 
 class IdsKsRelatedItem extends IdsKsObject {
@@ -58,13 +59,14 @@ class IdsKsRelatedItem extends IdsKsObject {
   public $relationship;
   public $referred_item;
   public $path;
-
 } // class IdsKsRelatedItem
 
 class IdsKsRelationship extends IdsKsObject {
   public $type;
   public $item_type;
   public $code;
+  public $inverse;
+  public $description;
 } // class IdsKsRelationship
 
 class IdsKsSource extends IdsKsObject {
@@ -88,6 +90,9 @@ class IdsKsSource extends IdsKsObject {
   public $contact_name;
   public $contact_role;
   public $contact_email;
+  public $is_external;
+  public $endpoint;
+  public $lifespan;
 } // class IdsKsSource
 
 class IdsKsTrackChanges extends IdsKsObject {

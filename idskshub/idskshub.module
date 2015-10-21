@@ -18,7 +18,7 @@ require_once('idskshub.processor.inc');
 require_once('idskshub.solr.inc');
 require_once('idskshub.semantic.inc');
 require_once('idskshub.callback.inc');
-require_once('idskshub.rdf.inc');
+//require_once('idskshub.rdf.inc');
 
 
 // TODO. Manage the options below through the admin interface.
@@ -80,7 +80,9 @@ function idskshub_get_types_ids() {
   $t = new IdsKsType();
   $types = $t->getObjectsByProperties();
   foreach ($types as $type) {
-    $array_types[$type->getId()] = $type->get('name');
+    if ($type->get('name') <> IDSKS_GENERIC_TYPE_NAME) {
+      $array_types[$type->getId()] = $type->get('name');
+    }
   }
   asort($array_types);
   return $array_types;    
@@ -102,7 +104,9 @@ function idskshub_get_relationship_ids() {
   $r = new IdsKsRelationship();
   $relationships = $r->getObjectsByProperties();
   foreach ($relationships as $relationship) {
+	if ($relationship->get('type') && $relationship->get('item_type')) {
     $array_relationships[$relationship->getId()] = $relationship->get('type') . ' - ' . $relationship->get('item_type')->get('name');
+  	}
   }
   asort($array_relationships);
   return $array_relationships;    
@@ -158,6 +162,12 @@ function idskshub_hub_source() {
     $source->save();
   }
   return $source;
+}
+
+function idskshub_get_values($item_id, $path, $source) {
+  $item = new IdsKsItem;
+  $item->load($item_id);
+  return implode(',',array_unique(idskshub_flatten_array($item->getPathValues($path, $source))));
 }
 
 function idskshub_get_xml_values($xml_item, $item_path, $root_path='') {
@@ -280,6 +290,33 @@ function idskshub_delete_literals_page($page_arguments) {
       }
     }
   echo '</ul>';
+}
+
+function idskshub_delete_related_item($page_arguments) {
+  $ids = explode(',', $page_arguments);
+  if (is_numeric($ids[0]) && is_numeric($ids[0])) {
+    $item_id = $ids[0];
+    $rel_item_id = $ids[0];
+    $item = new IdsKsItem;
+    $item->load($item_id);
+    if ($item->isSaved()) {
+      $item->deleteRelatedItemsByIds(array($rel_item_id));
+      echo '<ul>';
+        echo '<li>Related items deleted</li>';
+      echo '</ul>';
+    }
+    else {
+      echo '<ul>';
+        echo '<li>The item with id '. $item_id .' could not be retrieved.</li>';
+      echo '</ul>';
+    }
+  }
+  else {
+    echo '<ul>';
+      echo '<li>Invalid arguments</li>';
+    echo '</ul>';
+  }
+  echo "<a class='button blue' href='/item/$item_id'>Go back to the item</a>";
 }
 
 function idskshub_touch_by_sources($sources_ids) {
@@ -623,76 +660,84 @@ function idskshub_apply_mappings($mappings_ids) {
       $mapping = new IdsKsMapping();
       $mapping->load($mapping_id);
       if ($mapping->isSaved() && $mapping->get('path_origin') && $mapping->get('path_destination')) {
-        if (!($mapping->get('action') || $mapping->get('relationship'))) {
-          $mappings_applied[] = $mapping->getLabel();
-          $literals_original_path = IdsKsLiteral::getIds(array('original_path' => $mapping->get('path_origin')));
-          $versions_origin_ids = IdsKsVersionsLiteral::getIds(array('literals' => $literals_original_path));
-          $versions_destination_ids = IdsKsVersionsLiteral::getIds(array('path' => $mapping->get('path_destination')));
-          if (!empty($versions_origin_ids)) {
-            foreach ($versions_origin_ids as $versions_origin_id) {
-              //$versions_destination_id = 0;
-              $versions_origin = new IdsKsVersionsLiteral();
-              $versions_origin->load($versions_origin_id);
-              $literals_destination = array();
-              // we can't just change the path because there might be some literals that shouldn't be moved (because the attributes don't match, for instance).
-              foreach ($versions_origin->get('literals') as $literal_origin) {
-                // If the source and path match.
-                if ($literal_origin && $literal_origin->get('original_path') == $mapping->get('path_origin') && (!$mapping->get('source') || $mapping->get('source')->getId() == $literal_origin->get('source')->getId())) {
-                  // we check if the attributes match.
-                  $included_attrs_literal = (!$literal_origin->get('attributes') && !$mapping->get('attributes_origin') || !(array_udiff($mapping->get('attributes_origin'), $literal_origin->get('attributes'), 'idskshub_diff')));
-                  if ($included_attrs_literal) {
-                    $literals_destination[$literal_origin->getId()] = $literal_origin;
+        if ($mapping->get('source')) { // Added to avoid deleting literals by mistake.
+          if (!($mapping->get('action') || $mapping->get('relationship'))) {
+            $mappings_applied[] = $mapping->getLabel();
+            $literals_original_path = IdsKsLiteral::getIds(array('original_path' => $mapping->get('path_origin')));
+            $versions_origin_ids = IdsKsVersionsLiteral::getIds(array('literals' => $literals_original_path));
+            $versions_destination_ids = IdsKsVersionsLiteral::getIds(array('path' => $mapping->get('path_destination')));
+            if (!empty($versions_origin_ids)) {
+              foreach ($versions_origin_ids as $versions_origin_id) {
+                //$versions_destination_id = 0;
+                $versions_origin = new IdsKsVersionsLiteral();
+                $versions_origin->load($versions_origin_id);
+                $literals_destination = array();
+                // we can't just change the path because there might be some literals that shouldn't be moved (because the attributes don't match, for instance).
+                foreach ($versions_origin->get('literals') as $literal_origin) {
+                  // If the source and path match.
+                  if ($literal_origin && $literal_origin->get('original_path') == $mapping->get('path_origin') && (!$mapping->get('source') || $mapping->get('source')->getId() == $literal_origin->get('source')->getId())) {
+                    // we check if the attributes match.
+                    $included_attrs_literal = (!$literal_origin->get('attributes') && !$mapping->get('attributes_origin') || !(array_udiff($mapping->get('attributes_origin'), $literal_origin->get('attributes'), 'idskshub_diff')));
+                    if ($included_attrs_literal) {
+                      $literals_destination[$literal_origin->getId()] = $literal_origin;
+                    }
                   }
                 }
-              }
-              // we see if there is already a versions literal with the new path in the item to which this versions literal belongs.
-              if (!empty($literals_destination) && ($items_ids = IdsKsItem::getIds(array('versions_literals' => $versions_origin_id)))) {
-                $item_id = end($items_ids); // Each versions is only in one item.
-                $item = new IdsKsItem();
-                $item->load($item_id);
-                if (!$mapping->get('type') || ($item->get('type') && $item->get('type')->getId() == $mapping->get('type')->getId())) {
-                  // if the 'mapped' versions literal is already in the item, we update it with the literals in the "old" versions literal.
-                  $versions_literals_item = IdsKsItem::getChildrenIds($item_id, 'versions_literals');
-                  if ($versions_mapped_item_ids = array_intersect($versions_destination_ids, $versions_literals_item)) { // The mapped path exists in the item.
-                    $versions_destination_id = end($versions_mapped_item_ids); // There should be only one versions literal for each mapped path in an item.
-                    $versions_destination = new IdsKsVersionsLiteral();
-                    $versions_destination->load($versions_destination_id);
-                    foreach ($literals_destination as $literal) { // Copy the literals to the existing versions.
-                      if (!($versions_destination->inLiterals($literal))) {
-                        $versions_destination->add('literals', $literal);
+                // we see if there is already a versions literal with the new path in the item to which this versions literal belongs.
+                if (!empty($literals_destination) && ($items_ids = IdsKsItem::getIds(array('versions_literals' => $versions_origin_id)))) {
+                  $item_id = end($items_ids); // Each versions is only in one item.
+                  $item = new IdsKsItem();
+                  $item->load($item_id);
+                  if (!$mapping->get('type') || ($item->get('type') && $item->get('type')->getId() == $mapping->get('type')->getId())) {
+                    // if the 'mapped' versions literal is already in the item, we update it with the literals in the "old" versions literal.
+                    $versions_literals_item = IdsKsItem::getChildrenIds($item_id, 'versions_literals');
+                    if ($versions_mapped_item_ids = array_intersect($versions_destination_ids, $versions_literals_item)) { // The mapped path exists in the item.
+                      $versions_destination_id = end($versions_mapped_item_ids); // There should be only one versions literal for each mapped path in an item.
+                      $versions_destination = new IdsKsVersionsLiteral();
+                      $versions_destination->load($versions_destination_id);
+                      foreach ($literals_destination as $literal) { // Copy the literals to the existing versions.
+                        if (!($versions_destination->inLiterals($literal))) {
+                          $versions_destination->add('literals', $literal);
+                        }
+                      }
+                      $versions_destination->save();
+                      if (count($versions_origin->get('literals')) == count($literals_destination)) { // If all the literals are copied. There is no need to keep the old one.
+                        $versions_origin->delete(TRUE, FALSE); // We don't delete its literals, as they were moved.
+                      }
+                      else {
+                        // Some literals were not moved. We have to keep both versions, removing the ones to move from their old place.
+                        $versions_origin->deleteLiteralsByIds(array_keys($literals_destination), FALSE);
+                        $versions_origin->save();
                       }
                     }
-                    $versions_destination->save();
-                    if (count($versions_origin->get('literals')) == count($literals_destination)) { // If all the literals are copied. There is no need to keep the old one.
-                      $versions_origin->delete(TRUE, FALSE); // We don't delete its literals, as they were moved.
-                    }
-                    else {
-                      // Some literals were not moved. We have to keep both versions, removing the ones to move from their old place.
-                      $versions_origin->deleteLiteralsByIds(array_keys($literals_destination), FALSE);
-                      $versions_origin->save();
-                    }
-                  }
-                  else { // There are no literals with the mapped path.
-                    if (count($versions_origin->get('literals')) == count($literals_destination)) {  // All the literals have to be moved.
-                      $versions_origin->set('path', $mapping->get('path_destination')); // We can just change the path of the existing versions.
-                      $versions_origin->save();
-                    }
-                    else {
-                      // We have to keep the old one (removing the copied literals). $versions_destination is new.
-                      $versions_origin->deleteLiteralsByIds(array_keys($literals_destination), FALSE);
-                      $versions_origin->save();
-                      $versions_destination = new IdsKsVersionsLiteral();
-                      $versions_destination->set('literals', array_values($literals_destination)); // Remove NULLs.
-                      $versions_destination->set('path', $mapping->get('path_destination'));
-                      $versions_destination->save();
-                      $item->add('versions_literals', $versions_destination); // Add new versions to the item.
-                      $item->save();
+                    else { // There are no literals with the mapped path.
+                      if (count($versions_origin->get('literals')) == count($literals_destination)) {  // All the literals have to be moved.
+                        $versions_origin->set('path', $mapping->get('path_destination')); // We can just change the path of the existing versions.
+                        $versions_origin->save();
+                      }
+                      else {
+                        // We have to keep the old one (removing the copied literals). $versions_destination is new.
+                        $versions_origin->deleteLiteralsByIds(array_keys($literals_destination), FALSE);
+                        $versions_origin->save();
+                        $versions_destination = new IdsKsVersionsLiteral();
+                        $versions_destination->set('literals', array_values($literals_destination)); // Remove NULLs.
+                        $versions_destination->set('path', $mapping->get('path_destination'));
+                        $versions_destination->save();
+                        $item->add('versions_literals', $versions_destination); // Add new versions to the item.
+                        $item->save();
+                      }
                     }
                   }
                 }
               }
             }
           }
+          else {
+            drupal_set_message(t('Mappings involving actions cannot be applied outside an importing process. Mapping @mapping not applied.', array('@mapping'=>$mapping->getLabel())));
+          }
+        }
+        else {
+          drupal_set_message(t('The mapping @mapping does not have a source associated. It was not applied.', array('@mapping'=>$mapping->getLabel())));
         }
       }
     }
@@ -933,13 +978,204 @@ function idskshub_merge_items($items_ids, &$context) {
   idskshub_set('merging_items', FALSE);
 }
 
+// Create relationships uploaded from a CSV file.
+function idskshub_create_relationships_file($fid, $source1_id, $source2_id, $identifiers, $type1_id, $type2_id, $create1, $create2, $lang1, $lang2, $replace) {
+  if ($fid) {
+    $file = file_load($fid);
+    $file_path = drupal_realpath($file->uri);
+    $file_contents = file_get_contents($file_path);
+    $file_contents = mb_convert_encoding($file_contents, 'UTF-8');
+    $bom = pack('H*','EFBBBF'); // In case it is encoded as UTF-8-BOM.
+    $file_contents = preg_replace("/^$bom/", '', $file_contents);
+    $lines = explode("\n", $file_contents);
+  }
+  if ($lines) {
+    $okhub_source = new IdsKsSource;
+    $okhub_source->set('code', IDSKS_OKHUB_SOURCE_CODE);
+    $okhub_source->load();
+    $type1 = new IdsKsType;
+    $type1->load($type1_id);
+    $type2 = new IdsKsType;
+    $type2->load($type2_id);
+    $source1 = new IdsKsSource;
+    $source1->load($source1_id);
+    $source2 = new IdsKsSource;
+    $source2->load($source2_id);
+    $identifier_name1 = $identifiers[$source1_id];
+    $identifier_name2 = $identifiers[$source2_id];
+    if ($lang1) {
+      $lang_attr1 = IdsKsAttribute::getAttribute(IDSKS_LANGUAGE_ATTRIBUTE, $lang1);
+      $lang_attrs1 = array($lang_attr1);
+    }
+    else {
+      $lang_attrs1 = array();
+    }
+    if ($lang2) {
+      $lang_attr2 = IdsKsAttribute::getAttribute(IDSKS_LANGUAGE_ATTRIBUTE, $lang2);
+      $lang_attrs2 = array($lang_attr2);
+    }
+    else {
+      $lang_attrs2 = array();
+    }
+    if ($type1->isSaved() && $type2->isSaved() && $source1->isSaved() && $source2->isSaved()) {
+      $batch = array(
+        'operations' => array(
+          array('idskshub_create_relationship', array($lines, $okhub_source, $source1, $source2, $identifier_name1, $identifier_name2, $type1, $type2, $create1, $create2, $lang_attrs1, $lang_attrs2, $replace)),
+        ),  
+        'title' => t("Importing relationships"),
+        'error_message' => t('Error importing relationships.'),
+      );
+      batch_set($batch);
+      batch_process('upload-data-linkages');
+    }
+  }
+}
+
+function idskshub_create_relationship($lines, $okhub_source, $source1, $source2, $identifier_name1, $identifier_name2, $type1, $type2, $create1, $create2, $lang_attrs1, $lang_attrs2, $replace, &$context){
+  $context['sandbox']['max'] = count($lines);
+  if (!isset($context['sandbox']['progress'])) {
+    $context['sandbox']['progress'] = 0;
+    $context['finished'] = 0;
+  }
+  else {
+    $context['sandbox']['progress']++;
+    $context['message'] = 'Processing line ' . $context['sandbox']['progress'];
+    $context['finished'] = $context['sandbox']['progress'] / $context['sandbox']['max'];
+  }
+  if (isset($lines[$context['sandbox']['progress']])) {
+    if (($line = $lines[$context['sandbox']['progress']]) && !preg_match('/^\s*#/', $line)) {
+      list($label1, $identifier_val1, $rel_code, $label2, $identifier_val2) = str_getcsv($line);
+      trim($label1);
+      trim($identifier_val1);
+      trim($rel_code);
+      trim($label2);
+      trim($identifier_val2);
+      if (isset($identifier_val1) && isset($rel_code) && isset($identifier_val2) && $identifier_val1 !== '' && $rel_code !== '' && $identifier_val2 !== '') {
+        $item1 = new IdsKsItem;
+        $item1->set('type', $type1);
+        if ($items1_ids = IdsKsItem::retrieveItemIdsByKeys(array($identifier_name1 => $identifier_val1), FALSE, $source1, $type1)) {
+          $item1_id = array_shift($items1_ids);
+          $item1->load($item1_id);
+        }
+        elseif ($create1) {
+          $lits_id1 = new IdsKsVersionsLiteral;
+          $lits_id1->set('path', $identifier_name1);
+          $lits_id1->addLiteralXML($identifier_val1, $source1, $identifier_name1);
+          $item1->add('versions_literals', $lits_id1);
+          if ($label1) {
+            $lits_label1 = new IdsKsVersionsLiteral;
+            $lits_label1->set('path', IDSKS_DEFAULT_MAPPED_FIELD); // TODO: Make it possible to select the label.
+            $lits_label1->addLiteralXML($label1, $source1, IDSKS_DEFAULT_MAPPED_FIELD, $lang_attrs1);
+            $item1->add('versions_literals', $lits_label1);
+          }
+          $item1->addChanges($source1);
+          $item1->setDisplayTitle();
+          $item1->saveItem(TRUE, FALSE);
+        }
+        $item2 = new IdsKsItem;
+        $item2->set('type', $type2);
+        if ($items2_ids = IdsKsItem::retrieveItemIdsByKeys(array($identifier_name2 => $identifier_val2), FALSE, $source2, $type2)) {
+          $item2_id = array_shift($items2_ids);
+          $item2->load($item2_id);
+        }
+        elseif ($create2) {
+          $lits_id2 = new IdsKsVersionsLiteral;
+          $lits_id2->set('path', $identifier_name2);
+          $lits_id2->addLiteralXML($identifier_val2, $source2, $identifier_name2);
+          $item2->add('versions_literals', $lits_id2);
+          if ($label2) {
+            $lits_label2 = new IdsKsVersionsLiteral;
+            $lits_label2->set('path', IDSKS_DEFAULT_MAPPED_FIELD); // TODO: Make it possible to select the label.
+            $lits_label2->addLiteralXML($label2, $source2, IDSKS_DEFAULT_MAPPED_FIELD, $lang_attrs2);
+            $item2->add('versions_literals', $lits_label2);
+          }
+          $item2->addChanges($source2);
+          $item2->setDisplayTitle();
+          $item2->saveItem(TRUE, FALSE);
+        }
+        if ($item1->isSaved() && $item2->isSaved()) {
+          if (isset($context['relationships'][$rel_code])) {
+            $relationship = $context['relationships'][$rel_code];
+          }
+          else {
+            $relationship = new IdsKsRelationship;
+            $relationship->set('code', $rel_code);
+            $relationship->load();
+            if ($relationship->getId()) {
+              $context['relationships'][$rel_code] = $relationship;
+            }
+          }
+          if ($relationship->getId()) {
+            if ($existing_rel_item = $item1->getRelatedItem($item2)) { // If it exists and the relationship is different we update it.
+              if ($existing_rel_item->get('relationship') && $replace == 'replace' && $existing_rel_item->get('relationship')->get('code') <> $rel_code) {
+                $existing_rel_item->set('relationship', $relationship);
+                $existing_rel_item->save();
+              }
+            }
+            else {
+              $rel_item = new IdsKsRelatedItem;
+              $rel_item->set('referred_item', $item2);
+              $rel_item->set('relationship', $relationship);
+              $rel_item->set('source', $okhub_source);
+              $rel_item->save();
+              if ($rel_item->getId()) {
+                $item1->add('related_items', $rel_item);
+                $item1->save();
+                $item1->reindexParents();
+              }
+            }
+            // Add inverse relationship if it exists.
+            if ($inverse_rel_code = $relationship->get('inverse')) {
+              if (isset($context['relationships'][$inverse_rel_code])) {
+                $relationship = $context['relationships'][$inverse_rel_code];
+              }
+              else {
+                $relationship = new IdsKsRelationship;
+                $relationship->set('code', $inverse_rel_code);
+                $relationship->load();
+                if ($relationship->getId()) {
+                  $context['relationships'][$inverse_rel_code] = $relationship;
+                }
+              }
+              if ($relationship->getId()) {
+                if ($existing_rel_item = $item2->getRelatedItem($item1)) { // If it exists and the relationship is different we update it.
+                  if ($existing_rel_item->get('relationship') && $replace == 'replace' && $existing_rel_item->get('relationship')->get('code') <> $inverse_rel_code) {
+                    $existing_rel_item->set('relationship', $relationship);
+                    $existing_rel_item->save();
+                  }
+                }
+                else {
+                  $rel_item = new IdsKsRelatedItem;
+                  $rel_item->set('referred_item', $item1);
+                  $rel_item->set('relationship', $relationship);
+                  $rel_item->set('source', $okhub_source);
+                  $rel_item->save();
+                  if ($rel_item->getId()) {
+                    $item2->add('related_items', $rel_item);
+                    $item2->save();
+                    $item2->reindexParents();
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  else {
+    $context['finished'] = 1;
+  }
+}
+
 // Generate paths to use a base for mappings
 function idskshub_paths_literals($item) {
   $csv = array();
+  $type_name = ($item->get('type')->get('name')) ? $item->get('type')->get('name') : '*';
   foreach ($item->get('versions_literals') as $vl) {
     foreach ($vl->get('literals') as $lit) {
       if ($lit) {
-        $format_code = ($lit->get('source')->default_format->get('code')) ? $lit->get('source')->default_format->get('code') : '';
+        $format_code = '*';
         $source_code = ($lit->get('source')->get('code')) ? $lit->get('source')->get('code') : '';
         $original_path = ($lit->get('original_path')) ? $lit->get('original_path') : '';
         if ($lit->get('attributes')) {
@@ -955,7 +1191,7 @@ function idskshub_paths_literals($item) {
           $attributes_str = '';
         }
         $mapped_path = ($vl->get('path')) ? $vl->get('path') : '';
-        $csv[] = "\"$format_code\",\"$source_code\",\"$original_path\",\"$attributes_str\",\"$mapped_path\",\"\",\"\"\n";
+        $csv[] = "\"$format_code\",\"$source_code\",\"$type_name\",\"$original_path\",\"$attributes_str\",\"$mapped_path\",\"\",\"\"\n";
       }
     }
   }

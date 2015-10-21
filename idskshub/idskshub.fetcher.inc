@@ -36,11 +36,11 @@ class IdsKsFetcher {
       $file = file_load($fid);
     }
     elseif ($url) {
-      $file = system_retrieve_file($url, NULL, TRUE);
+      $file = system_retrieve_file($url, NULL, TRUE, FILE_EXISTS_RENAME, array('timeout' => 150));
     }
     elseif ($feed->get('url')) { // The file was not set, look for the feeds's import URL.
       $url = $feed->get('url');
-      $file = system_retrieve_file($url, NULL, TRUE);
+      $file = system_retrieve_file($url, NULL, TRUE, FILE_EXISTS_RENAME, array('timeout' => 150));
     }
     if (!empty($file)) {
       IdsKsParser::parseFile($file, $source, $feed, $format_code, $type_name, $mode, $semantic, $existing_items, $update_mode, $allow_multiple, $index_imported, $force_import);

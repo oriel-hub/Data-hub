@@ -23,58 +23,10 @@ class IdsKsFilterNonTypedItems extends SearchApiAbstractAlterCallback {
   }
 } // class IdsKsFilterNonTypedItems
 
-/*
-This needs additional work. Otherwise Search API will delete currently indexed elements that do not match the type.
-*/
-/*
-class IdsKsFilterDocuments extends SearchApiAbstractAlterCallback {
-  public function alterItems(array &$items) {
-    $documents = IdsKsType::getIds(array('name' => 'Document'));
-    foreach ($items as $id => &$item) {
-      $entity_lang = $item->search_api_language;
-      $type_id = $item->field_item_type[$entity_lang][0]['target_id'];
-      if (in_array($type_id, $documents)) {
-        unset($items[$id]);
-      }
-    }
-  }
-} // class IdsKsFilterDocuments
-
-class IdsKsFilterCategories extends SearchApiAbstractAlterCallback {
-  public function alterItems(array &$items) {
-    $themes = IdsKsType::getIds(array('name' => 'Theme'));
-    $countries= IdsKsType::getIds(array('name' => 'Country'));
-    $regions = IdsKsType::getIds(array('name' => 'Region'));
-    $document_types = IdsKsType::getIds(array('name' => 'DocumentType'));
-    $subjects = IdsKsType::getIds(array('name' => 'Subject'));  
-    $categories = array_merge($themes, $countries, $regions, $document_types, $subjects);  
-    foreach ($items as $id => &$item) {
-      $entity_lang = $item->search_api_language;
-      $type_id = $item->field_item_type[$entity_lang][0]['target_id'];
-      if (!in_array($type_id, $categories)) {
-        unset($items[$id]);
-      }
-    }
-  }
-} // class IdsKsFilterCategories
-*/
-
 /* --------------- Hooks ---------------- */
 
 // Implements hook_search_api_alter_callback_info().
 function idskshub_search_api_alter_callback_info() {
-/*
-  $callbacks['ids_ks_documents'] = array(
-    'name' => t('IDS KS Documents'),
-    'description' => t('Indexes only documents.'),
-    'class' => 'IdsKsFilterDocuments',
-  );
-  $callbacks['ids_ks_categories'] = array(
-    'name' => t('IDS KS Categories'),
-    'description' => t('Indexes only categories.'),
-    'class' => 'IdsKsFilterCategories',
-  );
-*/
   $callbacks['ids_ks_non_typed_items'] = array(
     'name' => t('IDS KS Typed Items'),
     'description' => t('Indexes only typed items.'),
@@ -120,6 +72,7 @@ function idskshub_search_api_solr_documents_alter(array &$documents, SearchApiIn
     case 'ids_ks_source':
       $prefix_sources_identifier = 'S';		// S for source!
       foreach ($documents as $document) {
+        //watchdog('xx'); //print_r($document,true));
         // Initialize arrays with hub-generated fields.
         $fields_source = array();
         $fields_language = array();
@@ -192,6 +145,12 @@ function idskshub_search_api_solr_documents_alter(array &$documents, SearchApiIn
               $fields_language['acronym'][IDSKS_DEFAULT_LANGUAGE] = array($source->get('contributor')->get('acronym')); 
               idskshub_solr_add_hub_fields('acronym', $document, $fields_language, $fields_source, $fields_translatable, $hub_fields_definitions, $hub_fields_values, $hub_solr_schema);
             }
+            if ($source->get('contributor')->get('description')) {
+              $fields_source['description'][IDSKS_OKHUB_SOURCE_CODE] = array($source->get('contributor')->get('description'));
+              $fields_language['description'][IDSKS_DEFAULT_LANGUAGE] = array($source->get('contributor')->get('description')); 
+              idskshub_solr_add_hub_fields('description', $document, $fields_language, $fields_source, $fields_translatable, $hub_fields_definitions, $hub_fields_values, $hub_solr_schema);
+            }	
+           
           }
 
           // language
@@ -208,6 +167,13 @@ function idskshub_search_api_solr_documents_alter(array &$documents, SearchApiIn
               // Need to make sure code is stored in the same format as the code when attached to items.
               if ($field_name == 'code') { 
                 $field_value = preg_replace('/_/', '', $field_value);
+              }
+              elseif ($field_name == 'logo') {
+                foreach ($field_value as $key_logo => $info_logo) {
+                  if (is_string($info_logo) && preg_match('/^public:\/\//', $info_logo)) { 
+                    $field_value[$key_logo] = preg_replace('/public:\/\/(.+)/', file_create_url('public://') . '$1', $info_logo);
+                  }
+                }
               }
               if (is_scalar($field_value)) {
                 idskshub_add_solr_scalar($document, $field_name, $field_value, TRUE, $fields_types, $fields_language, $fields_source, $fields_translatable, $hub_fields_definitions, $hub_fields_values, $hub_solr_schema);    
@@ -548,7 +514,6 @@ function idskshub_search_api_solr_documents_alter(array &$documents, SearchApiIn
 
                   /*------ Generate related_items' fields values as XML  ------*/
                   $ref_item_rel_items = $related_item->get('referred_item')->getRelItemsIds();
-                  //debug($ref_item_rel_items, '$ref_item_rel_items');
                   if ($related_item->get('source')->get('code') == IDSKS_OKHUB_SOURCE_CODE) {
                     $related_item_source_code = IDSKS_OKHUB_SOURCE_CODE;
                   }
@@ -606,7 +571,9 @@ function idskshub_search_api_solr_documents_alter(array &$documents, SearchApiIn
                             else {
                               $related_item_xml = "<$related_item_wrappers>$related_item_xml</$related_item_wrappers>";
                             }
-                            $related_items_xml[$related_item_source_code][$indexed_field_name][] = $related_item_xml;
+                            if (!isset($related_items_xml[$related_item_source_code][$indexed_field_name]) || !in_array($related_item_xml, $related_items_xml[$related_item_source_code][$indexed_field_name])) {
+                              $related_items_xml[$related_item_source_code][$indexed_field_name][] = $related_item_xml;
+                            }
                           }
                         }
                       }
@@ -1019,18 +986,6 @@ function idskshub_solr_field_assign_type($value, $field_type) {
   }
   return $value;
 }
-
-/*
-function simplexml_load_file_from_url($url, $timeout = 60){
-  $context = array('http' => array('timeout' => (int)$timeout));
-  $data = file_get_contents($url, false, stream_context_create($context));
-  if(!$data){
-    trigger_error('Cannot load data from url: ' . $url, E_USER_NOTICE);
-    return false;
-  }
-  return simplexml_load_string($data);
-} 
-*/
  
 // Retrieve single-valued fields and field types from Solr's schema.
 function idskshub_solr_schema_definitions() {
@@ -1095,6 +1050,11 @@ function idskshub_get_related_item_meta_field($rel_item, $meta_field, $ref_item_
         $value = $language;
       }
       break;
+    case 'source':
+      if ($source = $rel_item->get('referred_item')->getLatestSourceCode()) {
+        $value = preg_replace('/_/', '', $source);
+      }
+      break;
     case 'top_level':
       if ($rel_item->get('source')->get('code') == IDSKS_OKHUB_SOURCE_CODE) {
         $value = ($rel_item->get('referred_item')->isTopLevel()) ? 'true' : 'false'; // Have no parents for any source.
@@ -1145,19 +1105,17 @@ function idskshub_preprocess_solr_values(&$field_name, &$field_value, $original_
     $field = $matches[1];
     $source = $matches[2];
     $language = $matches[3];
-    switch ($field) {
+    switch ($field) {    
       case 'description':
         $field_value = preg_replace('/<img.*beacon_guid.*>/', '', $field_value);
         break;
       case 'language_array': // <language_array><language><list-item> ==> <languageList><language>
-        debug($field_value,'$field_value1');
         if (!preg_match('/languageList/', $field_value)) {
           $field_value = preg_replace('/<language>/', '', $field_value);
           $field_value = preg_replace('/<\/language>/', '', $field_value);
           $field_value = preg_replace('/<list\-item>/', '<language>', $field_value);
           $field_value = preg_replace('/<\/list\-item>/', '</language>', $field_value);
           $field_value = "<languageList>$field_value</languageList>";
-          debug($field_value,'$field_value2');
         }
         if (!(preg_match('/\[CDATA\[/', $field_value))) {
           $field_value = preg_replace('/<description>/i', '<description><![CDATA[', $field_value);
