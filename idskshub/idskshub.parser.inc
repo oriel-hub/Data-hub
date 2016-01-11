@@ -17,7 +17,7 @@ class IdsKsParser {
       $format->set('code', $format_code);
       $format->load();
     }
-    elseif ($feed->get('default_format')) {
+    elseif ($feed && $feed->get('default_format')) {
       $format = $feed->get('default_format');
     }
     else {
@@ -27,9 +27,16 @@ class IdsKsParser {
       $format->load();
     }
     if ($format->getId()) {
+      $xslt_file = NULL;
+      if ($feed && $feed->get('xslt_file')) {
+        $xslt_file = $feed->get('xslt_file');
+      }
+      elseif ($format->get('xslt_file')) {
+        $xslt_file = $format->get('xslt_file');
+      }
       $items = array();
       $file_path = drupal_realpath($file->uri);
-      list($item_path, $items, $total_elements, $root_file_attributes) = self::parseXML($file_path, $format);
+      list($item_path, $items, $total_elements, $root_file_attributes) = IdsKsParser::parseXML($file_path, $format, $xslt_file);
       if (!empty($items)) {
         IdsKsProcessor::batchProcess($items, $item_path, $source, $feed, $format, $type_name, $total_elements, $mode, $semantic, $existing_items, $update_mode, $allow_multiple, $index_imported, $force_import, $root_file_attributes);
       }
@@ -48,9 +55,10 @@ class IdsKsParser {
     }
   }
   
-  public function parseXML($file_path, $format) {
+  public static function parseXML($file_path, $format, $xslt_file) {
     $items = array();
     $item_paths = array();
+    $item_path = '';
     $root_file_attributes = array();
     $total_elements = 0;
     $file_contents = file_get_contents($file_path);
@@ -69,9 +77,9 @@ class IdsKsParser {
       $xml = new DOMDocument;
       $xml->recover = TRUE;
       if ($xml_loaded_ok = $xml->loadXML($file_contents, LIBXML_NOCDATA|LIBXML_ERR_NONE)) {
-        if ($format->get('xslt_file')) {
-          if ($file_xslt = file_load($format->get('xslt_file'))) {
-            $file_xslt_path = drupal_realpath($file_xslt->uri);
+        if ($xslt_file && isset($xslt_file[3])) {
+          $xslt_file_uri = $xslt_file[3];
+          if ($file_xslt_path = drupal_realpath($xslt_file_uri)) {
             $xsl = new DOMDocument;
             $xsl->substituteEntities = true;
             if ($xsl->load($file_xslt_path)) {
@@ -79,45 +87,48 @@ class IdsKsParser {
               $proc->importStyleSheet($xsl); // attach the xsl rules
               $file_contents = $proc->transformToXML($xml);
               $xml_loaded_ok = $xml->loadXML($file_contents, LIBXML_NOCDATA|LIBXML_ERR_NONE);
-              //file_put_contents('/tmp/transformed_'.time().'.xml', $file_contents);
             }
             else {
               drupal_set_message(t('The XSLT file @file could not be loaded. Please check the file format.', array('@file'=>$file_xslt_path)), 'warning');
             }
           }
           else {
-            drupal_set_message(t('The XSLT tranformations could not be applied to file @file. The file was not loaded.', array('@file'=>$file_path)), 'warning');
+            drupal_set_message(t('The XSLT tranformations could not be applied. The file @file was not loaded.', array('@file'=>$$xslt_file_uri)), 'warning');
           }
         }
         $dom = new SmartDOMDocument; // Quick fix to continue loading the file as HTML (which converts tags to lowercase, etc). For backward compatibility.
         $dom->recover = TRUE;
         if ($xml_loaded_ok && $dom->loadHTML($xml->saveHTML())) {
-          $xml_obj = simplexml_import_dom($dom);
-          $item_path = '';
-          $root_path = '';
-          $xml_root = '';
-          if ($format->get('root_path')) {
-            $root_path = $format->get('root_path');
-          }
-          if ($format->get('item_paths')) {
-            $item_paths = $format->get('item_paths');
-          }
-          if ($root_path) {
-            $root_string = '//' . idskshub_change_namespace($root_path);
-            $root = $xml_obj->xpath($root_string);
-            if (!empty($root)) {
-              $xml_root = end($root);
-              $root_file_attributes = (array) $xml_root->attributes();
+          if ($xml_obj = simplexml_import_dom($dom)) {
+            $item_path = '';
+            $root_path = '';
+            $xml_root = '';
+            if ($format->get('root_path')) {
+              $root_path = $format->get('root_path');
             }
-          }
-          if (!empty($item_paths)) {
-            foreach ($item_paths as $path) {
-              if ($items = idskshub_get_xml_values($xml_obj, $path, $root_path)) {            
-                $item_path = $path;
-                break;
+            if ($format->get('item_paths')) {
+              $item_paths = $format->get('item_paths');
+            }
+            if ($root_path) {
+              $root_string = '//' . idskshub_change_namespace($root_path);
+              $root = $xml_obj->xpath($root_string);
+              if (!empty($root)) {
+                $xml_root = end($root);
+                $root_file_attributes = (array) $xml_root->attributes();
               }
             }
-            $total_elements = count($xml_obj->xpath('//*')); // Total XML elements, to know the volume (items, subitems, literals) to import and switch to background.
+            if (!empty($item_paths)) {
+              foreach ($item_paths as $path) {
+                if ($items = idskshub_get_xml_values($xml_obj, $path, $root_path)) {            
+                  $item_path = $path;
+                  break;
+                }
+              }
+              $total_elements = count($xml_obj->xpath('//*')); // Total XML elements, to know the volume (items, subitems, literals) to import and switch to background.
+            }
+          }
+          else {
+            drupal_set_message(t('Error while parsing the XML file @file.', array('@file'=>$file_path)), 'error');
           }
         }
         else {

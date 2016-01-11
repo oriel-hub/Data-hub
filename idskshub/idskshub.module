@@ -35,6 +35,14 @@ function idskshub_supported_languages() {
   return $languages;
 }
 
+function idskshub_vocabularies() { // TODO: Use imported vocabularies: http://data.okhub.org/evoc/import
+  $vocabularies = array(
+    'skos' => 'http://www.w3.org/2004/02/skos/core#',
+    'dc' => 'http://purl.org/dc/terms/',
+  );
+  return $vocabularies;
+}
+
 function idskshub_mapping_actions() {
   $actions = array(
     'PREPROCESS' => 'PREPROCESS: Pre-process the content of the (XML) element by calling to a function',
@@ -335,6 +343,8 @@ function idskshub_index_by_sources($sources_ids) {
 function idskshub_entity_info_alter(&$entity_info) {
   $entity_info['ids_ks_attribute']['label callback'] = 'idskshub_entity_label';
   $entity_info['ids_ks_contributor']['label callback'] = 'idskshub_entity_label';
+  $entity_info['ids_ks_external_mappings']['label callback'] = 'idskshub_entity_label';
+  $entity_info['ids_ks_external_uris']['label callback'] = 'idskshub_entity_label';
   $entity_info['ids_ks_feed']['label callback'] = 'idskshub_entity_label';
   $entity_info['ids_ks_format']['label callback'] = 'idskshub_entity_label';
   $entity_info['ids_ks_item']['label callback'] = 'idskshub_entity_label';
@@ -365,6 +375,28 @@ function idskshub_entity_label($entity, $entity_type) {
       }
       if ($wrapper->{'field_contributor_acronym'}->value()) {
         $label .= ' (' . $wrapper->{'field_contributor_acronym'}->value() . ')';
+      }
+      break;
+    case 'ids_ks_external_mappings':
+      if (isset($wrapper->{'field_source_origin'}) && $wrapper->{'field_source_origin'}->value()) {
+        $label = idskshub_entity_label($wrapper->{'field_source_origin'}->value(), 'ids_ks_source');
+      }
+      if (isset($wrapper->{'field_source_destination'}) && $wrapper->{'field_source_destination'}->value()) {
+        $label .=  ' - ' . idskshub_entity_label($wrapper->{'field_source_destination'}->value(), 'ids_ks_source');
+      }
+      if (isset($wrapper->{'field_mappings_url'}) && $wrapper->{'field_mappings_url'}->value()) {
+        $label .=  ': ' . $wrapper->{'field_mappings_url'}->value();
+      }
+      break;
+    case 'ids_ks_external_uris':
+      if (isset($wrapper->{'field_source'}) && $wrapper->{'field_source'}->value()) {
+        $label = idskshub_entity_label($wrapper->{'field_source'}->value(), 'ids_ks_source');
+      }
+      if (isset($wrapper->{'field_type'}) && $wrapper->{'field_type'}->value()) {
+        $label .=  ':' . idskshub_entity_label($wrapper->{'field_type'}->value(), 'ids_ks_type');
+      }
+      if (isset($wrapper->{'field_uris_structure'}) && $wrapper->{'field_uris_structure'}->value()) {
+        $label .=  ': ' . $wrapper->{'field_uris_structure'}->value();
       }
       break;
     case 'ids_ks_feed':
@@ -979,7 +1011,7 @@ function idskshub_merge_items($items_ids, &$context) {
 }
 
 // Create relationships uploaded from a CSV file.
-function idskshub_create_relationships_file($fid, $source1_id, $source2_id, $identifiers, $type1_id, $type2_id, $create1, $create2, $lang1, $lang2, $replace) {
+function idskshub_create_relationships_file($fid, $source1_id, $source2_id, $identifiers, $type1_id, $type2_id, $create1, $create2, $labels, $lang1, $lang2, $replace) {
   if ($fid) {
     $file = file_load($fid);
     $file_path = drupal_realpath($file->uri);
@@ -1003,6 +1035,8 @@ function idskshub_create_relationships_file($fid, $source1_id, $source2_id, $ide
     $source2->load($source2_id);
     $identifier_name1 = $identifiers[$source1_id];
     $identifier_name2 = $identifiers[$source2_id];
+    $label_field1 = $labels[$source1_id];
+    $label_field2 = $labels[$source2_id];
     if ($lang1) {
       $lang_attr1 = IdsKsAttribute::getAttribute(IDSKS_LANGUAGE_ATTRIBUTE, $lang1);
       $lang_attrs1 = array($lang_attr1);
@@ -1020,7 +1054,7 @@ function idskshub_create_relationships_file($fid, $source1_id, $source2_id, $ide
     if ($type1->isSaved() && $type2->isSaved() && $source1->isSaved() && $source2->isSaved()) {
       $batch = array(
         'operations' => array(
-          array('idskshub_create_relationship', array($lines, $okhub_source, $source1, $source2, $identifier_name1, $identifier_name2, $type1, $type2, $create1, $create2, $lang_attrs1, $lang_attrs2, $replace)),
+          array('idskshub_create_relationship', array($lines, $okhub_source, $source1, $source2, $identifier_name1, $identifier_name2, $type1, $type2, $create1, $create2, $label_field1, $label_field2, $lang_attrs1, $lang_attrs2, $replace)),
         ),  
         'title' => t("Importing relationships"),
         'error_message' => t('Error importing relationships.'),
@@ -1031,7 +1065,7 @@ function idskshub_create_relationships_file($fid, $source1_id, $source2_id, $ide
   }
 }
 
-function idskshub_create_relationship($lines, $okhub_source, $source1, $source2, $identifier_name1, $identifier_name2, $type1, $type2, $create1, $create2, $lang_attrs1, $lang_attrs2, $replace, &$context){
+function idskshub_create_relationship($lines, $okhub_source, $source1, $source2, $identifier_name1, $identifier_name2, $type1, $type2, $create1, $create2, $label_field1, $label_field2, $lang_attrs1, $lang_attrs2, $replace, &$context){
   $context['sandbox']['max'] = count($lines);
   if (!isset($context['sandbox']['progress'])) {
     $context['sandbox']['progress'] = 0;
@@ -1064,8 +1098,8 @@ function idskshub_create_relationship($lines, $okhub_source, $source1, $source2,
           $item1->add('versions_literals', $lits_id1);
           if ($label1) {
             $lits_label1 = new IdsKsVersionsLiteral;
-            $lits_label1->set('path', IDSKS_DEFAULT_MAPPED_FIELD); // TODO: Make it possible to select the label.
-            $lits_label1->addLiteralXML($label1, $source1, IDSKS_DEFAULT_MAPPED_FIELD, $lang_attrs1);
+            $lits_label1->set('path', $label_field1);
+            $lits_label1->addLiteralXML($label1, $source1, $label_field1, $lang_attrs1);
             $item1->add('versions_literals', $lits_label1);
           }
           $item1->addChanges($source1);
@@ -1085,8 +1119,8 @@ function idskshub_create_relationship($lines, $okhub_source, $source1, $source2,
           $item2->add('versions_literals', $lits_id2);
           if ($label2) {
             $lits_label2 = new IdsKsVersionsLiteral;
-            $lits_label2->set('path', IDSKS_DEFAULT_MAPPED_FIELD); // TODO: Make it possible to select the label.
-            $lits_label2->addLiteralXML($label2, $source2, IDSKS_DEFAULT_MAPPED_FIELD, $lang_attrs2);
+            $lits_label2->set('path', $label_field2);
+            $lits_label2->addLiteralXML($label2, $source2, $label_field2, $lang_attrs2);
             $item2->add('versions_literals', $lits_label2);
           }
           $item2->addChanges($source2);
@@ -1099,13 +1133,14 @@ function idskshub_create_relationship($lines, $okhub_source, $source1, $source2,
           }
           else {
             $relationship = new IdsKsRelationship;
-            $relationship->set('code', $rel_code);
-            $relationship->load();
-            if ($relationship->getId()) {
-              $context['relationships'][$rel_code] = $relationship;
+            if ($rels_ids = IdsKsRelationship::getIds(array('code' => $rel_code, 'item_type' => $item2->get('type')->getId()))) {
+              $relationship->load($rels_ids[0]);
+              if ($relationship->isSaved()) {
+                $context['relationships'][$rel_code] = $relationship;
+              }
             }
           }
-          if ($relationship->getId()) {
+          if ($relationship->isSaved()) {
             if ($existing_rel_item = $item1->getRelatedItem($item2)) { // If it exists and the relationship is different we update it.
               if ($existing_rel_item->get('relationship') && $replace == 'replace' && $existing_rel_item->get('relationship')->get('code') <> $rel_code) {
                 $existing_rel_item->set('relationship', $relationship);
@@ -1131,13 +1166,14 @@ function idskshub_create_relationship($lines, $okhub_source, $source1, $source2,
               }
               else {
                 $relationship = new IdsKsRelationship;
-                $relationship->set('code', $inverse_rel_code);
-                $relationship->load();
-                if ($relationship->getId()) {
-                  $context['relationships'][$inverse_rel_code] = $relationship;
+                if ($rels_ids = IdsKsRelationship::getIds(array('code' => $inverse_rel_code, 'item_type' => $item1->get('type')->getId()))) {
+                  $relationship->load($rels_ids[0]);
+                  if ($relationship->isSaved()) {
+                    $context['relationships'][$inverse_rel_code] = $relationship;
+                  }
                 }
               }
-              if ($relationship->getId()) {
+              if ($relationship->isSaved()) {
                 if ($existing_rel_item = $item2->getRelatedItem($item1)) { // If it exists and the relationship is different we update it.
                   if ($existing_rel_item->get('relationship') && $replace == 'replace' && $existing_rel_item->get('relationship')->get('code') <> $inverse_rel_code) {
                     $existing_rel_item->set('relationship', $relationship);
@@ -1224,6 +1260,58 @@ function idskshub_paths_item($item) {
   return implode(array_unique($csv));
 }
 
+// SPARQL functions
+
+function idskshub_sparql_retrieve($endpoint_url, $subject='', $property='', $object='') {
+  $vocabularies = idskshub_vocabularies();
+  $dbpconfig = array('remote_store_endpoint' => $endpoint_url);
+  $store = ARC2::getRemoteStore($dbpconfig); 
+  if ($store->getErrors()) {
+    drupal_set_message(t('An error occurred when trying to access the SPARQL endpoint @endpoint.', array('@endpoint' => $endpoint_url)), 'error');
+  }
+  $query = '';
+  foreach ($vocabularies as $voc => $voc_url) {
+    $query .= "PREFIX $voc:<$voc_url>\n";
+  }
+  $voc_regexp = implode('|', array_keys($vocabularies));
+  if ($property) {
+    if (!preg_match('/^<.+>$/', $property)) {
+      if (!$vocabularies || !preg_match('/^'.$voc_regexp.'\:/', $property)) {
+        $property = "<$property>";
+      }
+    }
+  }
+  else {
+    $property = '?property';
+  }
+  if ($subject) {
+    if (!preg_match('/^<.+>$/', $subject)) {
+      if (!$vocabularies || !preg_match('/^'.$voc_regexp.'\:/', $subject)) {
+        $subject = "<$subject>";
+      }
+    }
+  }
+  else {
+    $subject = '?subject';
+  }
+  if ($object) {
+    if (!preg_match('/^<.+>$/', $object)) {
+      if (!$vocabularies || !preg_match('/^'.$voc_regexp.'\:/', $object)) {
+        $object = "<$object>";
+      }
+    }
+  }
+  else {
+    $object = '?object';
+  }
+  $query .= "SELECT * WHERE { $subject $property $object . }";
+  $rows = $store->query($query, 'rows'); /* execute the query */
+  if ($errors = $store->getErrors()) {
+    debug($errors, '$errors');
+    drupal_set_message(t('An error occurred when executing the SPARQL query @query: @error', array('@query' => $query, '@error' => $errors[0])), 'error');
+  }
+  return $rows;
+}
 
 // Implement hook_access.
 function idskshub_access($op, $task, $account = NULL, $entity_type = NULL) {

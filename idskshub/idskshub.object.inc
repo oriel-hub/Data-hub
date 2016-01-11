@@ -99,67 +99,6 @@ class IdsKsObject {
     }
   }
 
-  protected function addConditionsArray($query, $elements, $field_name) {
-    foreach ($elements as $element) {
-      if (is_a($element, 'IdsKsObject')) {
-        $objects = $element->getObjectsByProperties();
-        foreach ($objects as $object) {
-          if ($object->getId()) {
-            $query->fieldCondition($field_name, 'target_id', $object->getId(), '=');
-          }
-        }
-      }
-      elseif (is_array($element)) { // it should have been serialized when saving, so we compare to the serialized value.
-        $query->fieldCondition($field_name, 'value', serialize($element), '=');
-      }
-      else {
-        $query->fieldCondition($field_name, 'value', $element, '=');
-      }
-    }
-  }
-
-  protected function addConditionsObject($query, $object, $field_name) {
-    if (!$id_value = $object->getId()) {
-      $results = $object->getObjectsByProperties();
-      $values_ids = array();
-      foreach ($results as $result) {
-        if ($result->getId()) {
-          $values_ids[] = $result->getId();
-        }
-      }
-      if (!empty($values_ids)) {
-        $query->fieldCondition($field_name, 'target_id', $values_ids, 'IN');
-      }
-    } else {
-      $query->fieldCondition($field_name, 'target_id', $id_value, '=');
-    }
-  }
-
-  public function getEntitiesByProperties() {
-    $entities = array();
-    $query = new EntityFieldQuery();
-    $query->entityCondition('entity_type', $this->getEntityType());
-    $query->entityCondition('bundle', $this->getBundleType());
-    foreach ($this as $property => $value) {
-      if (($property != 'id') && isset($value)) {
-        if (is_array($value)) {
-          self::addConditionsArray($query, $value, $this->getFieldName($property));
-        }
-        elseif (is_a($value, 'IdsKsObject')) {
-          self::addConditionsObject($query, $value, $this->getFieldName($property));
-        }
-        else {
-          $query->fieldCondition($this->getFieldName($property), 'value', $value, '=');
-        }
-      }
-    }
-    $results = $query->execute();
-    if (isset($results[$this->getEntityType()])) {
-      $entities = $results[$this->getEntityType()];
-    }
-    return $entities;
-  }
-
   public function isSaved() {
     return (entity_load_single($this->getEntityType(), $this->getId())) ? TRUE : FALSE;
   }
@@ -174,24 +113,38 @@ class IdsKsObject {
 
   public function getObjectsByProperties() {
     $objects = array();
-    $entities = $this->getEntitiesByProperties();
-    $ids = array_keys($entities);
-    foreach ($ids as $id) {
-      $object = self::factory($this->getEntityType());
-      $object->setId($id);
-      $object->load();
-      $objects[] = $object;
+    $filters = array();
+    foreach ($this as $property => $value) {
+      if (($property != 'id') && isset($value)) {
+        if (is_scalar($value)) {
+          $filters[$property][] = $value;
+        }
+        elseif (is_a($value, 'IdsKsObject') && $value->getId()) {
+          $filters[$property][] = $value->getId();
+        }
+        elseif (is_array($value)) {
+          foreach ($value as $val) {
+            if (scalar($val)) {
+              $filters[$property][] = $val;
+            }
+            elseif (is_a($val, 'IdsKsObject') && $val->getId()) {
+              $filters[$property][] = $val->getId();
+            }
+            elseif (is_array($val)) {
+              $filters[$property][] = serialize($val);
+            }
+          }
+        }
+      }
+    }
+    if ($ids = self::getIds($filters)) {
+      foreach ($ids as $id) {
+        $object = self::factory($this->getEntityType());
+        $object->load($id);
+        $objects[] = $object;
+      }
     }
     return $objects;
-  }
-
-  public function getSingleEntityByProperties() {
-    $entity = NULL;
-    $entities = $this->getEntitiesByProperties();
-    if (!empty($entities)) {
-      $entity = array_pop($entities);
-    }
-    return $entity;
   }
 
   public function getSingleObjectByProperties() {
@@ -212,8 +165,7 @@ class IdsKsObject {
   }
 
   // Save the current object to an entity (updates it based on the ID, or creates it if it doesn't exist).
-  // $recursive = TRUE creates all the referenced entities with their corresponding types, but we don't want to do it all the time.
-  public function save($recursive = FALSE) {
+  public function save() {
     $entity = NULL;
     if ($this->getId()) {
       $entity = $this->getEntity();
@@ -225,36 +177,17 @@ class IdsKsObject {
       $wrapper = entity_metadata_wrapper($entity->entityType(), $entity);
       foreach ($this as $property => $value) {
         if (is_array($value)) {
-          $field_value = self::saveMultipleValues($value, $recursive);
+          $field_value = self::saveMultipleValues($value);
         }
         elseif (is_object($value)) {
-          if (is_subclass_of(get_class($value), 'IdsKsObject')) {
-            if ($recursive) {
-              $field_value = $value->save($recursive);
-            }
-            else {
-              if ($id = $value->getId()) {
-                $field_value = $id;
-              }
-            }
-          }
-          else { // if it corresponds to an entity reference, we create a new entity with the values of the object.
-            if ($recursive) {
-              $field_name = $this->getFieldName($property);
-              $field_info = field_info_field($field_name);
-              if (isset($field_info['settings']['target_type'])) {
-                $property_type = $field_info['settings']['target_type'];
-                $new_object = IdsKsObject::factory($property_type);
-                $new_object->copy($value);
-                $field_value = $new_object->save($recursive);
-              }
-            }
+          if (is_subclass_of(get_class($value), 'IdsKsObject') && ($id = $value->getId())) {
+            $field_value = $id;
           }
         }
         else {
           $field_value = $value;
         }
-        $field_name = $this->getFieldName($property);
+        $field_name = self::getFieldName($property);
         if (isset($wrapper->{$field_name}) && isset($field_value)) { // We only update those fields that have some value assigned.
           $wrapper->{$field_name} = $field_value;
         }
@@ -272,16 +205,11 @@ class IdsKsObject {
   }
 
   // Save array.
-  protected function saveMultipleValues($elements, $recursive) {
+  protected function saveMultipleValues($elements) {
     $values = array();
     foreach ($elements as $element) {
-      if (is_a($element, 'IdsKsObject')) {
-        if ($recursive) {
-          $element->save($recursive);
-        }
-        if ($id = $element->getID()) {
-          $values[] = $element->getID();
-        }
+      if (is_a($element, 'IdsKsObject') && ($id = $element->getID())) {
+        $values[] = $element->getID();
       }
       elseif (is_array($element)) { // not possible with entities, so we serialize it.
         $values[] = serialize($element);
@@ -346,7 +274,7 @@ class IdsKsObject {
   }
 
   // Get the short format of the type based on the class of the current object.
-  public function getObjType() {
+  public static function getObjType() {
     $type =  self::getTypeFromClass(get_called_class());
     return $type;
   }
@@ -357,19 +285,19 @@ class IdsKsObject {
   }
 
   // Get the entity name corresponding to the class of the current object.
-  public function getEntityType() {
+  public static function getEntityType() {
     $entity_type = 'ids_ks_' . self::getObjType();
     return $entity_type;
   }
 
   // Get the bundle name corresponding to the class of the current object.
-  public function getBundleType() {
+  public static function getBundleType() {
     $bundle_type = 'ids_ks_' . self::getObjType();
     return $bundle_type;
   }
 
   // Get the name of an entity field, corresponding to a property of the current object.
-  public function getFieldName($property) {
+  public static function getFieldName($property) {
 //    $field_name = 'field_' . self::getObjType() . '_' . $property;
     $entity_type = self::getEntityType();
     $bundle_name = self::getBundleType();
@@ -411,18 +339,16 @@ class IdsKsObject {
     $this->{$property}[] = $value;
   }
 
-  public function get($property, $wrapper=NULL) {
-    if (!isset($this->{$property}) && $this->getId() && ($entity = $this->getEntity())) {
-      if (!isset($wrapper)) {
-        $wrapper = entity_metadata_wrapper($this->getEntityType(), $entity, array('bundle' => $this->getBundleType()));
-      }
-      $field_name = $this->getFieldName($property);
+  public function get($property) {
+    if (!isset($this->{$property}) && $entity = $this->getEntity()) {
+      $wrapper = entity_metadata_wrapper($this->getEntityType(), $entity, array('bundle' => $this->getBundleType()));
+      $field_name = self::getFieldName($property);
       if (isset($wrapper->{$field_name})) {
         $field_value = $wrapper->{$field_name}->value();
         if (is_array($field_value)) {
           $this->{$property} = $this->populateMultipleValues($field_value);
         }
-        elseif (is_a($field_value, 'Entity')) {
+        elseif (is_a($field_value, 'Entity') && preg_match('/^ids_ks_/', $field_value->entityType())) {
           $this->{$property} = self::factory($field_value->bundle()); // Create a new IdsKsObject corresponding to this type.
           $this->{$property}->setId($field_value->identifier());
         }
@@ -438,8 +364,13 @@ class IdsKsObject {
     $values = array();
     foreach ($elements as $element) {
       if (is_a($element, 'Entity')) {
-        $new_value = self::factory($element->bundle());
-        $new_value->setId($element->identifier());
+        if (preg_match('/^ids_ks_/', $element->entityType())) {
+          $new_value = self::factory($element->bundle());
+          $new_value->setId($element->identifier());
+        }
+        else {
+          $new_value = $element;
+        }
         $values[] = $new_value;
       }
       else {
@@ -451,11 +382,24 @@ class IdsKsObject {
   }
 
   public function populate() {
-    if ($this->getId() && ($entity = $this->getEntity())) {
+    if ($this->getId() && $entity = $this->getEntity()) {
       $wrapper = entity_metadata_wrapper($this->getEntityType(), $entity, array('bundle' => $this->getBundleType()));
       $properties = array_keys(get_object_vars($this));
       foreach ($properties as $property) {
-        $this->get($property, $wrapper);
+        $field_name = self::getFieldName($property);
+        if (isset($wrapper->{$field_name})) {
+          $field_value = $wrapper->{$field_name}->value();
+          if (is_array($field_value)) {
+            $this->{$property} = $this->populateMultipleValues($field_value);
+          }
+          elseif (is_a($field_value, 'Entity') && preg_match('/^ids_ks_/', $field_value->entityType())) {
+            $this->{$property} = self::factory($field_value->bundle()); // Create a new IdsKsObject corresponding to this type.
+            $this->{$property}->setId($field_value->identifier());
+          }
+          else {
+            $this->{$property} = $field_value;
+          }
+        }
       }
     }
   }
@@ -560,7 +504,7 @@ class IdsKsObject {
 
   public static function getChildrenIds($parent_id = 0, $property) {
     $result = array();
-    $children = IdsKsItem::getFieldValues($property, array($parent_id));
+    $children = self::getFieldValues($property, array($parent_id));
     if (isset($children[$parent_id])) {
       $result = $children[$parent_id];
     }

@@ -16,6 +16,7 @@ class IdsKsType extends IdsKsObject {
   public $title_paths;
   public $description_paths;
   public $update_existing;
+  public $is_category;
 
   public static function getGenericType() {
     $type = new IdsKsType();

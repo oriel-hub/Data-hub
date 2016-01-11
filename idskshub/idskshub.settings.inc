@@ -31,20 +31,25 @@ define('IDSKS_LANGUAGE_ATTRIBUTE', 'lang');
 define('IDSKS_LANGUAGES_FIELD', 'metadata_languages');
 define('IDSKS_LANGUAGES_XML_FIELD', 'hub_metadata_languages');
 define('IDSKS_DEFAULT_MAPPED_FIELD', 'name'); // Used when no destination field is defined in the mapping and a new related item has to be created.
-define('IDSKS_SOLR_INDEX', 'ids_ks_item_sources_index');
-define('IDSKS_DEFAULT_MAPPING_RELATIONSHIP', 'exactMatch');
+define('IDSKS_DEFAULT_MAPPING_REL_CATEGORY', 'exactMatch');
+define('IDSKS_DEFAULT_MAPPING_REL_ASSET', 'sameAs');
+define('IDSKS_DEFAULT_PARENT_REL_CATEGORY', 'broader');
+define('IDSKS_DEFAULT_CHILD_REL_CATEGORY', 'narrower');
+define('IDSKS_EXCLUDE_EXTERNAL_FROM_INDEX', FALSE); // Prevent items from external sources from being included in the Solr index.
 if ($GLOBALS ['base_url'] == 'http://data.test.okhub.org') { // Development server
   define('IDSKS_OKHUB_URL', 'http://data.test.okhub.org');
   define('IDSKS_SOLR_SERVER', 'http://data.test.okhub.org:8983');
   define('IDSKS_SOLR_CORE', 'oriel-dev');
+  define('IDSKS_SOLR_INDEX', 'okhub_solr_index_dev');
   define('IDSKS_URL_API', 'http://api.test.okhub.org/v1/hub');
   define('IDSKS_URL_EXPLORER', 'http://explorer.test.okhub.org');
   define('IDSKS_FILES_URL', 'http://data.test.okhub.org/sites/data.test.okhub.org/files');
 }
-else { // Live server or drush without -l
+elseif ($GLOBALS ['base_url'] == 'http://data.okhub.org') { // Live server
   define('IDSKS_OKHUB_URL', 'http://data.okhub.org');
   define('IDSKS_SOLR_SERVER', 'http://data.okhub.org:8983');
   define('IDSKS_SOLR_CORE', 'okhub-live');
+  define('IDSKS_SOLR_INDEX', 'ids_ks_item_sources_index');
   define('IDSKS_URL_API', 'http://api.okhub.org/v1/hub');
   define('IDSKS_URL_EXPLORER', 'http://explorer.okhub.org');
   define('IDSKS_FILES_URL', 'http://data.okhub.org/sites/data.okhub.org/files');

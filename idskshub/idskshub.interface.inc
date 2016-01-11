@@ -51,7 +51,8 @@ function idskshub_preprocess_page(&$variables) {
 * Build and display a form defined in this module.
 */
 function idskshub_form($form, $args = array()) {
-  print drupal_render(drupal_get_form('idskshub_' . $form . '_form', $args));
+  $gen_form = drupal_get_form('idskshub_' . $form . '_form', $args);
+  print drupal_render($gen_form);
 }
 
 /**
@@ -145,9 +146,9 @@ function eck__entity__form_add_ids_ks_source_ids_ks_source_validate($form, &$for
   idskshub_validate_slug('field_source_code', 'field_source_name', $form, $form_state);
   idskshub_validate_paths('field_source_identifiers', $form, $form_state);
   $field_is_external = idskshub_get_field_input('field_is_external', $form_state);
-  $field_endpoint = idskshub_get_field_input('field_endpoint', $form_state);
-  if ($field_is_external && (!isset($field_endpoint[0]['value']) || filter_var($field_endpoint[0]['value'], FILTER_VALIDATE_URL) === FALSE)) {
-    form_set_error('field_endpoint', t("A valid endpoint URL is required for external sources."));    
+  $field_endpoint_url = idskshub_get_field_input('field_endpoint_url', $form_state);
+  if ($field_is_external && (!isset($field_endpoint_url[0]['value']) || filter_var($field_endpoint_url[0]['value'], FILTER_VALIDATE_URL) === FALSE)) {
+    form_set_error('field_endpoint_url', t("A valid endpoint URL is required for external sources."));    
   }
 }
 
@@ -155,9 +156,9 @@ function eck__entity__form_edit_ids_ks_source_ids_ks_source_validate($form, &$fo
   idskshub_validate_slug('field_source_code', 'field_source_name', $form, $form_state);
   idskshub_validate_paths('field_source_identifiers', $form, $form_state);
   $field_is_external = idskshub_get_field_input('field_is_external', $form_state);
-  $field_endpoint = idskshub_get_field_input('field_endpoint', $form_state);
-  if ($field_is_external && (!isset($field_endpoint[0]['value']) || filter_var($field_endpoint[0]['value'], FILTER_VALIDATE_URL) === FALSE)) {
-    form_set_error('field_endpoint', t("A valid endpoint URL is required for external sources."));    
+  $field_endpoint_url = idskshub_get_field_input('field_endpoint_url', $form_state);
+  if ($field_is_external && (!isset($field_endpoint_url[0]['value']) || filter_var($field_endpoint_url[0]['value'], FILTER_VALIDATE_URL) === FALSE)) {
+    form_set_error('field_endpoint_url', t("A valid endpoint URL is required for external sources."));    
   }
 }
 
@@ -166,7 +167,10 @@ function idskshub_validate_paths($field_path, $form, &$form_state, $wildcard=FAL
     foreach ($field_paths_form as $delta => $field_path_form) {
       if (!empty($field_path_form['value'])) {
         if (idskshub_check_path($field_path_form['value'], $wildcard)) {
-          $field_path_form['value'] = strtolower(trim($field_path_form['value'], '/'));
+          $field_path_form['value'] = trim($field_path_form['value'], '/');
+          if (preg_match('/\//', $field_path_form['value'])) {
+            $field_path_form['value'] = strtolower($field_path_form['value']);
+          }
           idskshub_set_field_value($field_path, $field_path_form['value'], $form_state, $delta);
         }
         else {
@@ -517,8 +521,8 @@ function idskshub_single_fields_form_submit($form, &$form_state) {
 function idskshub_single_fields_form_validate($form, &$form_state) {
   $values = $form_state['values'];
   $field_name = $values['field_name'];
-  if (!preg_match('/^[_a-zA-Z0-9]+$/', $field_name)) {
-    form_set_error('field_name', t("The field name can only contain alphanumeric characters and underscores."));
+  if (!preg_match('/^[\:\-_a-zA-Z0-9]+$/', $field_name)) {
+    form_set_error('field_name', t("The field name can only contain alphanumeric characters, colons, dashes and underscores."));
   }
 }
 
@@ -550,8 +554,8 @@ function idskshub_translatable_fields_form_submit($form, &$form_state) {
 function idskshub_translatable_fields_form_validate($form, &$form_state) {
   $values = $form_state['values'];
   $field_name = $values['field_name'];
-  if (!preg_match('/^[_a-zA-Z0-9]+$/', $field_name)) {
-    form_set_error('field_name', t("The field name can only contain alphanumeric characters and underscores."));
+  if (!preg_match('/^[\:\-_a-zA-Z0-9]+$/', $field_name)) {
+    form_set_error('field_name', t("The field name can only contain alphanumeric characters, colons, dashes and underscores."));
   }
 }
 
@@ -1422,6 +1426,30 @@ function idskshub_upload_data_mappings_identifiers_fields(&$form, $identifiers_p
   }
 }
 
+function idskshub_upload_data_mappings_label_field(&$form, $num_source) {
+  $type_labels = IdsKsType::getFieldValues('title_paths');
+  $group_source = 'group_source' . $num_source;
+  foreach ($type_labels as $id_type => $labels) {
+    $visibility = array(
+        ':input[name="type'.$num_source.'"]' => array('value' => $id_type),
+        ':input[name="create'.$num_source.'[create]"]' => array('checked' => TRUE),
+        );
+    $label_field_name = 'label-' . $num_source . '---type-' . $id_type;
+    $form[$group_source][$label_field_name] = array(
+      '#title' => t('Label field'),
+      '#multiple' => '0',
+      '#type' => 'select',
+      '#options' => array_combine($labels, $labels),
+      '#default_value' => 0,
+      '#required' => FALSE,
+      '#weight' => 35,
+      '#states' => array(
+        'visible' => $visibility,
+        ),
+    );
+  }
+}
+
 // Content-mapping form.
 function idskshub_upload_data_mappings_form($form, $form_state) {
   $types = idskshub_get_types_ids();
@@ -1486,8 +1514,9 @@ function idskshub_upload_data_mappings_form($form, $form_state) {
     '#weight' => '30',
     '#description' => t('If checked, the items that are not found in the hub will be created using the uploaded values for identifiers and labels. If not checked, the non-existing items will be ignored.'),
   );
+  idskshub_upload_data_mappings_label_field($form, '1');
   $form['group_source1']['lang1'] = array(
-    '#title' => t('Labels\' language'),
+    '#title' => t('Label language'),
     '#type' => 'select',
     '#multiple' => '0',
     '#options' => array(''=>'Use the source\'s default language') + idskshub_supported_languages(),
@@ -1534,8 +1563,9 @@ function idskshub_upload_data_mappings_form($form, $form_state) {
     '#weight' => '30',
     '#description' => t('If checked, the items that are not found in the hub will be created using the uploaded values for identifiers and labels. If not checked, the non-existing items will be ignored.'),
   );
+  idskshub_upload_data_mappings_label_field($form, '2');
   $form['group_source2']['lang2'] = array(
-    '#title' => t('Labels\' language'),
+    '#title' => t('Label language'),
     '#type' => 'select',
     '#multiple' => '0',
     '#options' => array(''=>'Use the source\'s default language') + idskshub_supported_languages(),
@@ -1564,7 +1594,7 @@ function idskshub_upload_data_mappings_form($form, $form_state) {
     '#description' => 
       t('Upload a comma-separated CSV file with one mapping per row.') . '<br>' .  
       t('The second column must hold the identifier value of the first source, the third column must hold the relationship code and the fifth column must hold the identifier value of the second source.') . '<br>' .
-      t('The first and fourth columns typically hold the item\'s labels but are optional and will not be used to establish the relationships.') . '<br>' .
+      t('The first and fourth columns hold the item\'s labels. They will only be used if creating new items. In this case, the indicated language and hub field name will be used for the label field.') . '<br>' .
       t('Lines beginning with the # character will be ignored and can be used to include comments.') . '<br>' .
       t('Example (mapping between BRIDGE and Observaction): <ul><li><i><b>"Conflict, peace and security",C1534,exactMatch,,Conflits</b></i></ul>') . '<br>',
     '#type' => 'managed_file',
@@ -1589,6 +1619,10 @@ function idskshub_upload_data_mappings_form_validate($form, &$form_state) {
   $identifiers[$form_values['source1']] = $form_values['identifier-1---source-'.$form_values['source1'].'---type-'.$form_values['type1']];
   $identifiers[$form_values['source2']] = $form_values['identifier-2---source-'.$form_values['source2'].'---type-'.$form_values['type2']];
   $form_state['values']['identifiers'] = $identifiers;
+  $labels = array();
+  $labels[$form_values['source1']] = $form_values['label-1---type-'.$form_values['type1']];
+  $labels[$form_values['source2']] = $form_values['label-2---type-'.$form_values['type2']];
+  $form_state['values']['labels'] = $labels;
 }
 
 /**
@@ -1603,11 +1637,11 @@ function idskshub_upload_data_mappings_form_submit($form, &$form_state) {
   $source2_id = $form_state['values']['source2'];
   $create1 = $form_state['values']['create1']['create'];
   $create2 = $form_state['values']['create2']['create'];
+  $labels = $form_state['values']['labels'];
   $lang1 = $form_state['values']['lang1'];
   $lang2 = $form_state['values']['lang2'];
   $replace = $form_state['values']['replace'];
-  //debug($form_state['values'],'values');
-  idskshub_create_relationships_file($fid, $source1_id, $source2_id, $identifiers, $type1_id, $type2_id, $create1, $create2, $lang1, $lang2, $replace);
+  idskshub_create_relationships_file($fid, $source1_id, $source2_id, $identifiers, $type1_id, $type2_id, $create1, $create2, $labels, $lang1, $lang2, $replace);
 }
 
 /* Combine items forms */
@@ -1837,14 +1871,22 @@ function idskshub_newmapping_form($form, $form_state) {
 */
 function idskshub_newmapping_form_validate($form, &$form_state) {
   if (idskshub_check_path($form_state['values']['path_origin'], TRUE)) {
-    $form_state['values']['path_origin'] = trim($form_state['values']['path_origin'], '/');
+//    $form_state['values']['path_origin'] = strtolower(trim($form_state['values']['path_origin'], '/'));
+      $form_state['values']['path_origin'] = trim($form_state['values']['path_origin'], '/');
+      if (preg_match('/\//', $form_state['values']['path_origin'])) {
+        $form_state['values']['path_origin'] = strtolower($form_state['values']['path_origin']);
+      }
     if ($form_state['values']['path_destination_select']) {
       $paths_destination_select = array_filter(array_unique(idskshub_flatten_array(IdsKsMapping::getFieldValues('path_destination'))));
       sort($paths_destination_select);
       $form_state['values']['path_destination'] = $paths_destination_select[$form_state['values']['path_destination_select'] - 1];
     }
     elseif (idskshub_check_path($form_state['values']['path_destination'])) {
+      //$form_state['values']['path_destination'] = strtolower(trim($form_state['values']['path_destination'], '/'));
       $form_state['values']['path_destination'] = trim($form_state['values']['path_destination'], '/');
+      if (preg_match('/\//', $form_state['values']['path_destination'])) {
+        $form_state['values']['path_destination'] = strtolower($form_state['values']['path_destination']);
+      }
     }
     elseif (!in_array($form_state['values']['action'], array_keys(idskshub_mapping_actions()))) {
       form_set_error('path_destination', t('The destination path is not valid. Please enter a valid path or select an action to execute.'));

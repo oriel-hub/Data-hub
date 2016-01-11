@@ -14,6 +14,7 @@ require_once('idskshub.idsksliteral.inc');
 require_once('idskshub.idsksmapping.inc');
 require_once('idskshub.idskstype.inc');
 require_once('idskshub.idsksversionsliteral.inc');
+require_once('idskshub.idsksrelateditem.inc');
 
 // See if this is useful in practice. This information could go in the source.
 class IdsKsContributor extends IdsKsObject {
@@ -40,10 +41,41 @@ class IdsKsFeed extends IdsKsObject {
   public $source;
   public $default_type;
   public $default_format;
+  public $xslt_file;
   public $periodicity;
   public $weekday;
   public $crontab; //Currently not being used.
 } // class IdsKsFeed
+
+class IdsKsExternalMappings extends IdsKsObject {
+  public $source_origin;
+  public $source_destination;
+  public $mappings_url;
+  public $external_property;
+  public $relationship;
+  public $relationship_source;
+} // class IdsKsExternalMappings
+
+class IdsKsExternalUris extends IdsKsObject {
+  public $source;
+  public $type;
+  public $uris_structure;
+
+  public function getValuesFromUri($uri) {
+    $values = array();
+    preg_match_all('/%(?!%).+?%/', $this->get('uris_structure'), $matches);
+    $keys = $matches[0];
+    $regexp = '@' . preg_replace('/%(?!%).+?%/', '(.+)', $this->get('uris_structure')) . '@';
+    preg_match($regexp, $uri, $vals);
+    if ($vals) {
+      foreach ($keys as $pos => $key) {
+        $key = trim($key, '%');
+        $values[$key] = $vals[$pos+1];
+      }
+    }
+    return $values;
+  }
+} // class IdsKsExternalUris
 
 class IdsKsFormat extends IdsKsObject {
   public $code;
@@ -53,13 +85,6 @@ class IdsKsFormat extends IdsKsObject {
   public $type_path;
   public $xslt_file;
 } // class IdsKsFormat
-
-class IdsKsRelatedItem extends IdsKsObject {
-  public $source;
-  public $relationship;
-  public $referred_item;
-  public $path;
-} // class IdsKsRelatedItem
 
 class IdsKsRelationship extends IdsKsObject {
   public $type;
@@ -91,8 +116,10 @@ class IdsKsSource extends IdsKsObject {
   public $contact_role;
   public $contact_email;
   public $is_external;
-  public $endpoint;
+  public $endpoint_url;
   public $lifespan;
+  public $external_properties;
+  public $editorial_policy;
 } // class IdsKsSource
 
 class IdsKsTrackChanges extends IdsKsObject {
@@ -104,11 +131,9 @@ class IdsKsTrackChanges extends IdsKsObject {
   public static function hashExists($hash) {
     return self::getIds(array('hash' => $hash));
   }
-
   public static function newHash($data) {
     return hash('md5', $data);
   }
-
 } // class IdsKsTrackChanges
 
 

@@ -27,7 +27,8 @@ class IdsKsMapping extends IdsKsObject {
       if ($replace === 'replace') {
         IdsKsObject::deleteAll('IdsKsMapping');
       }
-      while (list($format_code_file, $source_code_file, $type_name_file, $path_orig, $attributes_origin, $path_dest, $action, $relationship_code) = fgetcsv($handle)) {
+      $item_types = array_flip(idskshub_get_types_ids());
+      while (list($format_code_file, $source_code_file, $type_name_file, $path_orig, $attributes_origin, $path_dest, $action, $relationship_code, $item_type_name) = fgetcsv($handle)) {
         if ($format_code_file) { // there is a format in the file.
           $format_code_mapping = $format_code_file;
         }
@@ -46,19 +47,36 @@ class IdsKsMapping extends IdsKsObject {
         else {
           $type_name_mapping = $type_name;
         }
-        $relationship_id = end(IdsKsRelationship::getIds(array('code' => $relationship_code)));
-        trim($path_orig, '/');
-        trim($path_dest, '/');
-        if (idskshub_check_path($path_orig, TRUE) && (idskshub_check_path($path_dest) || (!$path_dest && in_array($action, array_keys(idskshub_mapping_actions()))))) {
-          $mapping = self::createMappingFromStrings($path_orig, $path_dest, $format_code_mapping, $source_code_mapping, $type_name_mapping, $attributes_origin, $relationship_id, $action);
-          if (!($mapping->getId())) {
-            $error = TRUE;
-            drupal_set_message(t('The mapping @path_orig -> @path_dest could not be created', array('@path_orig' => $path_orig, '@path_dest' => $path_dest)), 'warning');
-          }
+        if ($relationship_code && isset($item_types[$item_type_name])) {
+          $relationship_id = end(IdsKsRelationship::getIds(array('code' => $relationship_code, 'item_type' => $item_types[$item_type_name])));
         }
         else {
+          $relationship_id = 0;
+        }
+        trim($path_orig, '/');
+        trim($path_dest, '/');
+        if ($action == 'RELATED_ITEM' && !$relationship_id) {
           $error = TRUE;
-          drupal_set_message(t('The mapping @path_orig -> @path_dest could not be created. The paths are not valid.', array('@path_orig' => $path_orig, '@path_dest' => $path_dest)), 'warning');
+          drupal_set_message(t('The mapping @path_orig -> @path_dest could not be created. A valid relationship code and item type are required for RELATED_ITEM mappings.', array('@path_orig' => $path_orig, '@path_dest' => $path_dest)), 'warning');
+        }
+        else {
+          if ($action == 'PREPROCESS' && !$path_dest) {
+            $error = TRUE;
+            drupal_set_message(t('The mapping @path_orig -> @path_dest could not be created. A valid callback function is required for PREPROCESS mappings.', array('@path_orig' => $path_orig, '@path_dest' => $path_dest)), 'warning');
+          }
+          else {
+            if (idskshub_check_path($path_orig, TRUE) && (idskshub_check_path($path_dest) || (!$path_dest && in_array($action, array_keys(idskshub_mapping_actions()))))) {
+              $mapping = self::createMappingFromStrings($path_orig, $path_dest, $format_code_mapping, $source_code_mapping, $type_name_mapping, $attributes_origin, $relationship_id, $action);
+              if (!($mapping->getId())) {
+                $error = TRUE;
+                drupal_set_message(t('The mapping @path_orig -> @path_dest could not be created', array('@path_orig' => $path_orig, '@path_dest' => $path_dest)), 'warning');
+              }
+            }
+            else {
+              $error = TRUE;
+              drupal_set_message(t('The mapping @path_orig -> @path_dest could not be created. The paths are not valid.', array('@path_orig' => $path_orig, '@path_dest' => $path_dest)), 'warning');
+            }
+          }
         }
       }
       if (!$error) {

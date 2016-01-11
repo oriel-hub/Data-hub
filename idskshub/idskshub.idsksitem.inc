@@ -46,7 +46,6 @@ class IdsKsItem extends IdsKsObject {
     return $latest_id;
   }
 
-  // Get the sources from where the item was updated at some point.
   public function getLatestChangeFromSourceCode($source_code) {
     $found_change = NULL;
     if ($this->get('track_changes')) {
@@ -113,6 +112,215 @@ class IdsKsItem extends IdsKsObject {
       }
     }    
     return $found;
+  }
+
+  public function isExternal() {
+    $is_external = TRUE;
+    if ($this->get('versions_literals')) {
+      foreach ($this->get('versions_literals') as $versions_literals) {
+        if ($versions_literals && $versions_literals->get('literals')) {
+          foreach ($versions_literals->get('literals') as $literal) {
+            if ($literal && $literal->get('source') && !$literal->get('source')->get('is_external')) {
+              $is_external = FALSE;
+              break 2;
+            }
+          }
+        }
+      }
+    } 
+    return $is_external;
+  }
+
+  public function getExternalUriFromStructure($uri_structure, $source) {
+    $uri = $uri_structure;
+    preg_match_all('/%(?!%).+?%/', $uri_structure, $matches);
+    $replace_values = array();
+    if ($meta_fields = $matches[0]) {
+      foreach($meta_fields as $meta_field) {
+        $field_name = trim($meta_field, '%');
+        if ($literals = idskshub_flatten_array($this->getPathValues($field_name , $source->get('code')))) {
+          $value = $literals[0]; // We use the first one found if there are more than one.
+        }
+        else {
+          $value = '';
+        }
+        $replace_values['/'.$meta_field.'/'] = $value;
+      }
+      $uri = preg_replace(array_keys($replace_values), $replace_values, $uri_structure);
+    }
+    return $uri;
+  }
+
+  public function updateExternalRelationships($force_update = FALSE) {
+    $sources = $this->getSourcesFromValues();
+    foreach ($sources as $source) {
+      $sources_ids[] = $source->getId();
+    }
+    $external_mappings_ids = IdsKsExternalMappings::getIds(array('source_origin' => $sources_ids));
+    foreach ($external_mappings_ids as $external_mapping_id) {
+      $external_mapping = new IdsKsExternalMappings;
+      $external_mapping->load($external_mapping_id);
+      $relationship_source = $external_mapping->get('relationship_source');
+      $update = TRUE;
+      if (!$force_update && $latest_change_source = $this->getLatestChangeFromSourceCode($relationship_source->get('code'))) {
+        $update = ($latest_change_source->get('timestamp') + $relationship_source->get('lifespan')*24*60*60 < time());
+      }
+      if ($update) {
+        $this->updateExternalRelationshipsMapping($external_mapping);
+        $external_mapping->set('applied', time());
+        $external_mapping->save();
+      }
+    }
+  }
+
+  public function updateExternalRelationshipsMapping($external_mapping) {
+    $this->addChanges($external_mapping->get('relationship_source'));
+    $new_rel_items = FALSE;
+    $m = new IdsKsExternalMappings;
+    $m->set('source_origin', $external_mapping->get('source_origin'));
+    if ($external_mappings = $m->getObjectsByProperties()) {
+      // Current item's uri.
+      $e = new IdsKsExternalUris;
+      $e->set('type', $this->get('type'));
+      $e->set('source', $external_mapping->get('source_origin'));
+      if ($external_uri_origin = $e->getSingleObjectByProperties()) {
+        if ($item_uri = $this->getExternalUriFromStructure($external_uri_origin->get('uris_structure'), $external_mapping->get('source_origin'))) {
+          // Get external related items.
+          $e = new IdsKsExternalUris;
+          $e->set('type', $external_mapping->get('relationship')->get('item_type'));
+          $e->set('source', $external_mapping->get('source_destination'));
+          if ($external_uri_destination = $e->getSingleObjectByProperties()) {
+            $current_item_related_items_ids = IdsKsItem::getChildrenIds($this->getId(), 'related_items');
+            $related_items_source_ids = array();
+            $mapped_items_uris = idskshub_sparql_retrieve($external_mapping->get('mappings_url'), $item_uri, $external_mapping->get('external_property'));
+            foreach ($mapped_items_uris as $mapped_item_uri) {
+              if ($mapped_item_uri['object'] <> $item_uri) { // the SPARQL query returns the original item, too. TODO: Add $external_uri_destination->matches($mapped_item_uri) for an extra check.
+                $field_values = $external_uri_destination->getValuesFromUri($mapped_item_uri['object']);
+                // Item exists in the hub (with values matching those in the uri).
+                if ($existing_items_ids = IdsKsItem::retrieveItemIdsByKeys($field_values, TRUE, $external_mapping->get('source_destination'), $external_mapping->get('relationship')->get('item_type'))) {
+                  foreach ($existing_items_ids as $existing_item_id) { // In general, it should be only one.
+                    $rel_items_existing_item_ids = IdsKsRelatedItem::getIds(array('source' => $external_mapping->get('relationship_source')->getId(), 'referred_item' => $existing_item_id));
+                    $rel_items_same_rel_existing_item_ids = IdsKsRelatedItem::getIds(array('source' => $external_mapping->get('relationship_source')->getId(), 'relationship' => $external_mapping->get('relationship')->getId(), 'referred_item' => $existing_item_id));
+                    $existing_related_items_ids = array_intersect($rel_items_existing_item_ids, $current_item_related_items_ids);
+                    $existing_same_rel_related_items_ids = array_intersect($rel_items_same_rel_existing_item_ids, $current_item_related_items_ids);
+                    // If the existing item was not related with the same relationship, we create the new relationship.
+                    // If the item was related by another relationship from the same source, we delete the previous relationship first.
+                    if (empty($existing_related_items_ids) || $existing_related_items_ids <> $existing_same_rel_related_items_ids) {
+                      $this->deleteRelatedItemsByIds($existing_related_items_ids);
+                      $new_rel_items = TRUE;
+                      $referred_item = new IdsKsItem;
+                      $referred_item->load($existing_item_id);
+                      $related_item = new IdsKsRelatedItem;
+                      $related_item->set('referred_item', $referred_item);
+                      $related_item->set('source', $external_mapping->get('relationship_source'));
+                      $related_item->set('relationship', $external_mapping->get('relationship'));
+                      $related_item->save();
+                      $this->add('related_items', $related_item);
+                      $related_item->createInverse($this);
+                      $related_items_source_ids[] = $related_item->getId();
+                    }
+                    else {
+                      $related_items_source_ids = array_merge($related_items_source_ids, $existing_related_items_ids);
+                    }
+                  }
+                }
+                else {
+                  // It's a new item and relationship.
+                  $new_rel_items = TRUE;
+                  $referred_item = new IdsKsItem;
+                  $referred_item->set('type', $external_mapping->get('relationship')->get('item_type'));
+                  foreach ($field_values as $field => $value) {
+                    $versions_literal = new IdsKsVersionsLiteral();
+                    $versions_literal->set('path', $field);
+                    $versions_literal->addLiteralXML($value, $external_mapping->get('source_destination'), $field);
+                    $referred_item->add('versions_literals', $versions_literal);
+                  }
+                  $referred_item->addChanges($external_mapping->get('source_destination'));
+                  $referred_item->saveItem();
+                  $related_item = new IdsKsRelatedItem;
+                  $related_item->set('referred_item', $referred_item);
+                  $related_item->set('source', $external_mapping->get('relationship_source'));
+                  $related_item->set('relationship', $external_mapping->get('relationship'));
+                  $related_item->save();
+                  $this->add('related_items', $related_item);
+                  $related_item->createInverse($this);
+                  $related_items_source_ids[] = $related_item->getId();
+                }
+              }
+            } // foreach
+            if ($new_rel_items) {
+              $this->saveItem();
+            }
+            // Delete existing relationships by the source that are no longer present in the response from the SPARQL endpoint.
+            $delete_old_related_items_source = array();
+            $sources_rel_items_current_item = IdsKsRelatedItem::getFieldValues('source', $current_item_related_items_ids);
+            foreach ($sources_rel_items_current_item as $rel_item_id => $sources_ids) {
+              if (in_array($external_mapping->get('relationship_source')->getId(), $sources_ids)) { // It's a related item by the relationship source.
+                if (!in_array($rel_item_id, $related_items_source_ids)) { // The related item is no longer valid according to the external source.
+                  $delete_old_related_items_source[] = $rel_item_id;
+                }
+              }
+            }
+            if ($delete_old_related_items_source) {
+              $this->deleteRelatedItemsByIds($delete_old_related_items_source);
+            }
+          }
+        }
+      }
+    }
+  }
+
+  public function updateExternalValues($force_update = FALSE) {
+    $sources = $this->getSourcesFromValues();
+    foreach ($sources as $source) {
+      if ($source->get('is_external')) {
+        $update = TRUE;
+        if (!$force_update && $latest_change_source = $this->getLatestChangeFromSourceCode($source->get('code'))) {
+          $update = ($latest_change_source->get('timestamp') + $source->get('lifespan')*24*60*60 < time());
+        }
+        if ($update) {
+          $this->updateExternalValuesSource($source);
+        }
+      }
+    }
+  }
+
+  public function updateExternalValuesSource($source) {
+    $updated = FALSE;
+    if ($source->get('external_properties') && $source->get('endpoint_url')) {
+      $current_values = $this->getValuesBySource();
+      if (isset($current_values[$source->get('code')]['uri'])) {
+        $uri = end($current_values[$source->get('code')]['uri']);
+        $values_paths = array();
+        foreach ($source->get('external_properties') as $property) {
+          if ($values = idskshub_sparql_retrieve($source->get('endpoint_url'), $uri, $property)) {
+            $versions_literals = $this->getVersionsLiteralPath($property);
+            $versions_literals->deleteLiteralsBySourceId($source->getId());
+            foreach ($values as $value) {
+              if (isset($value['object'])) {
+                $attributes = array();
+                foreach ($value as $key => $val) {
+                  $array_key = explode(' ', $key);
+                  if (isset($array_key[1])) { // it's an attribute
+                    $attr_name = $array_key[1];
+                    $attr_value = $val;
+                    $attr = IdsKsAttribute::getAttribute($attr_name, $attr_value);
+                    $attributes[] = $attr;
+                  }
+                }
+                $updated = TRUE;
+                $versions_literals->addLiteralXML($value['object'], $source, $property, $attributes);
+              }
+            }
+          }
+        }
+        if ($updated) {
+          $this->addChanges($source);
+          $this->setDisplayTitle();
+          $this->saveItem();
+        }
+      }
+    } 
   }
 
   // Get the item type based on the source and/or type passed.
@@ -310,8 +518,8 @@ class IdsKsItem extends IdsKsObject {
               foreach ($literal->get('attributes') as $attribute) {
                 if ($attribute->get('name') == IDSKS_LANGUAGE_ATTRIBUTE) {
                   $language = $attribute->get('value');
+                  break;
                 }
-                break;
               }
             }
             if (!$language) {
@@ -435,7 +643,12 @@ class IdsKsItem extends IdsKsObject {
   public function isTopLevel($source_code = '') {
     $top_level = TRUE;
     if ($this->get('type') && ($type = $this->get('type')->get('name'))) {
-      $parent_rel_code = 'parent_' . strtolower($type);
+      if (!defined('IDSKS_DEFAULT_PARENT_REL_CATEGORY')) { // For backwards compatibility - it can be deleted after updating the settings in the live server.
+        $parent_rel_code = 'parent_' . strtolower($type);
+      }
+      else {
+        $parent_rel_code = IDSKS_DEFAULT_PARENT_REL_CATEGORY;
+      }
       $rel_items = $this->getRelItemsIds();
       if ($source_code) { // is top-level in this source's hierarchy
         $top_level = !isset($rel_items[$parent_rel_code][$source_code]);
@@ -631,28 +844,33 @@ class IdsKsItem extends IdsKsObject {
     }
   }
 
+  // Create related items "inverse" to the item's related items.
+  public function createInverseRelatedItems() { 
+    if ($this->get('related_items')) {
+      foreach ($this->get('related_items') as $related_item) {
+        if (is_object($related_item)) { 
+          $related_item->createInverse($this);
+        }
+      }
+    }
+  }
+
   public function deleteRelatedItemsByIds($related_items_ids=array()) {
-    $related_items = array();
     if ($related_items_ids) {
+      $related_items = array();
       foreach ($this->get('related_items') as $related_item) {
         if ($related_item) {
           if (!in_array($related_item->getId(), $related_items_ids)) {
             $related_items[] = $related_item;
           }
           else {
-            // If there are inverse relationship we delete those, too.
-            $relationship = $related_item->get('relationship');
             $referred_item = $related_item->get('referred_item');
             $related_item->delete();
-            if ($referred_item && $relationship && ($inverse_rel_code = $relationship->get('inverse'))) {
-              $inverse_rel = new IdsKsRelationship;
-              $inverse_rel->set('code', $inverse_rel_code);
-              $inverse_rel->load();
-              if ($inverse_rel && ($inverse_related_items = IdsKsRelatedItem::getIds(array('relationship'=>$inverse_rel->getId(), 'referred_item'=>$this->getId())))) {
-                $items_ids = IdsKsItem::getIds(array('related_items' => $inverse_related_items));
-                if (in_array($referred_item->getId(), $items_ids)) {
-                  $referred_item->deleteRelatedItemsByIds($inverse_related_items);
-                }
+            // If there are inverse relationship we delete those, too.
+            if ($inverse_related_items = IdsKsRelatedItem::getIds(array('referred_item'=>$this->getId()))) {
+              $items_ids = IdsKsItem::getIds(array('related_items' => $inverse_related_items));
+              if (in_array($referred_item->getId(), $items_ids)) { // If the referred item also points to the current item, we delete that relationship, too.
+                $referred_item->deleteRelatedItemsByIds($inverse_related_items);
               }
             }    
           }
@@ -677,7 +895,7 @@ class IdsKsItem extends IdsKsObject {
     return $empty;
   }
 
-  // Adds atomic values for the *existing* (mapped) paths ids in $values_paths.
+  // Adds atomic values for the *existing* (mapped) paths ids in $values_paths. TODO: Add attributes.
   public function addValues($values_paths, $source = NULL) {
     if (empty($source)) {
       $source = idskshub_hub_source();
@@ -709,9 +927,22 @@ class IdsKsItem extends IdsKsObject {
     $semantic_codes = array_keys(idskshub_get_semantic_services());
     // Get "same as" relationship based on current item's type.
     $same_as_rel = new IdsKsRelationship;
-    if ($this->get('type') && $this->get('type')->get('name')) {
-      $same_as_rel->set('code', 'same_as_' . strtolower($this->get('type')->get('name')));
-      $same_as_rel->load();
+    //----- Leaving this temporarily for backward compatibility, until the relationships are updated in the live server ---------------
+    if (!defined('IDSKS_DEFAULT_MAPPING_REL_CATEGORY')) {
+      $rel_code = 'same_as_' . strtolower($this->get('type')->get('name'));
+    }
+    //---------------------------------------------------------------------------------------------------------------------------------
+    else {
+      if ($this->get('type')->get('is_category')) {
+        $rel_code = IDSKS_DEFAULT_MAPPING_REL_CATEGORY;
+      }
+      else {
+        $rel_code = IDSKS_DEFAULT_MAPPING_REL_ASSET;
+      }
+    }
+    if ($rels_ids = IdsKsRelationship::getIds(array('code' => $rel_code, 'item_type' => $this->get('type')->getId()))) {
+    // rel. code and item type should be a key, so there should be only one.
+      $same_as_rel->load($rels_ids[0]);
     }
     // Get source corresponding to the OKHub;
     $okhub_source = new IdsKsSource;
@@ -812,7 +1043,7 @@ class IdsKsItem extends IdsKsObject {
         }
       }
       // Add "same as" links between the new items and the current item.
-      if ($same_as_rel->getId() && $okhub_source->getId()) {
+      if ($same_as_rel->isSaved() && $okhub_source->getId()) {
         $new_rel_item = new IdsKsRelatedItem;
         $new_rel_item->set('referred_item', $this);        
         $new_rel_item->set('relationship', $same_as_rel);
@@ -826,7 +1057,7 @@ class IdsKsItem extends IdsKsObject {
       // Update new items' related items.
       $new_items[$source_code1]->save();
       // Add "links" from current item to new items.
-      if ($new_items[$source_code1]->getId() && $same_as_rel->getId() && $okhub_source->getId()) {
+      if ($new_items[$source_code1]->getId() && $same_as_rel->isSaved() && $okhub_source->getId()) {
         $new_rel_item = new IdsKsRelatedItem;
         $new_rel_item->set('referred_item', $new_items[$source_code1]);
         $new_rel_item->set('relationship', $same_as_rel);
@@ -1396,6 +1627,7 @@ class IdsKsItem extends IdsKsObject {
                   $xml_value_related->addChild(IDSKS_DEFAULT_MAPPED_FIELD, (string)$xml_value_related); //TODO: Check the type's title fields, if they are defined.
                 }
                 $serialized_referred_item = $xml_value_related->asXML();
+                $save_referred_item = FALSE;
                 $new_referred_item = new IdsKsItem();
                 $new_referred_item->set('type', $mapping->get('relationship')->get('item_type'));
                 $new_referred_item->populateItemXML($xml_value_related, $xml_path, $source, $format);
@@ -1409,10 +1641,7 @@ class IdsKsItem extends IdsKsObject {
                 }
                 if (empty($referred_item_ids)) { // It's a new item of this type. We save it.
                   $referred_item = $new_referred_item;
-                  $referred_item->saveSubitems();
-                  $referred_item->saveRelatedItems();
-                  $referred_item->addChanges($source, $serialized_referred_item);
-                  $referred_item->saveItem();
+                  $save_referred_item = TRUE;
                 }
                 else { // Matching items already exist. 
                   if ($found_by_source || $update_existing) {
@@ -1421,13 +1650,10 @@ class IdsKsItem extends IdsKsObject {
                     $referred_item->load($referred_item_id);              
                     if ($update_existing && !$referred_item->hasContentFromSource($source->getId())) { // We only update it if it doesn't already have content from this source.
                       $referred_item->updateSourceValues($new_referred_item, $source);
-                      $referred_item->saveSubitems();
-                      $referred_item->saveRelatedItems();
-                      $referred_item->addChanges($source, $serialized_referred_item);
-                      $referred_item->saveItem();
+                      $save_referred_item = TRUE;
                     }
                   }
-                  else { // We add "same as" links to matching items.
+                  else { // We do not update the content but add "same as" links to matching items.
                     // Get source corresponding to the OKHub;
                     $okhub_source = new IdsKsSource;
                     $okhub_source->set('code', IDSKS_OKHUB_SOURCE_CODE);
@@ -1435,54 +1661,51 @@ class IdsKsItem extends IdsKsObject {
                     $referred_item = $new_referred_item;
                     $rel_items = array();
                     $same_as_rel = new IdsKsRelationship;
-                    $same_as_rel->set('code', IDSKS_DEFAULT_MAPPING_RELATIONSHIP);
-                    $same_as_rel->load();
                     //----- Leaving this temporarily for backward compatibility, until the relationships are updated in the live server ---------------
-                    if ($same_as_rel->getId()) {
-                      $inverse_rel_code = $same_as_rel->get('inverse');
-                    }
-                    elseif ($referred_item->get('type')->get('name')) {
+                    if (!defined('IDSKS_DEFAULT_MAPPING_REL_CATEGORY')) {
                       $rel_code = 'same_as_' . strtolower($referred_item->get('type')->get('name'));
-                      $same_as_rel->set('code', $rel_code);
-                      $same_as_rel->load();
-                      $inverse_rel_code = $rel_code;
                     }
                     //---------------------------------------------------------------------------------------------------------------------------------
-                    if ($same_as_rel->getId()) {
-                      foreach ($referred_item_ids as $referred_item_id) {
-                        $rel_item = new IdsKsItem;
-                        $rel_item->load($referred_item_id);
-                        $rel_items[] = $rel_item;
-                        $new_rel_item = new IdsKsRelatedItem;
-                        $new_rel_item->set('referred_item', $rel_item);
-                        $new_rel_item->set('relationship', $same_as_rel);
-                        $new_rel_item->set('source', $okhub_source);
-                        $new_rel_item->save();
-                        $referred_item->add('related_items', $new_rel_item);
+                    else {
+                      if ($referred_item->get('type')->get('is_category')) {
+                        $rel_code = IDSKS_DEFAULT_MAPPING_REL_CATEGORY;
+                      }
+                      else {
+                        $rel_code = IDSKS_DEFAULT_MAPPING_REL_ASSET;
                       }
                     }
-                    $referred_item->saveSubitems();
-                    $referred_item->saveRelatedItems();
-                    $referred_item->addChanges($source, $serialized_referred_item);
-                    $referred_item->saveItem();
-                    $inverse_rel = new IdsKsRelationship;
-                    if ($inverse_rel_code) {
-                      $inverse_rel->set('code', $inverse_rel_code);
-                      $inverse_rel->load();
-                    }
-                    if (!empty($rel_items) && $inverse_rel->getId()) { // We have to add the links from the existing items to the new rel. item.
-                      foreach ($rel_items as $rel_item) {
-                        $new_rel_item = new IdsKsRelatedItem;
-                        $new_rel_item->set('referred_item', $referred_item);
-                        $new_rel_item->set('relationship', $inverse_rel);
-                        $new_rel_item->set('source', $okhub_source);
-                        $new_rel_item->save();
-                        $rel_item->add('related_items', $new_rel_item);
-                        $rel_item->save();
+                    if ($rels_ids = IdsKsRelationship::getIds(array('code' => $rel_code, 'item_type' => $referred_item->get('type')->getId()))) {
+                      // rel. code and item type should be a key, so there should be only one.
+                      $same_as_rel->load($rels_ids[0]);
+                      if ($same_as_rel->isSaved()) {
+                        foreach ($referred_item_ids as $referred_item_id) {
+                          $rel_item = new IdsKsItem;
+                          $rel_item->load($referred_item_id);
+                          $new_rel_item = new IdsKsRelatedItem;
+                          $new_rel_item->set('referred_item', $rel_item);
+                          $new_rel_item->set('relationship', $same_as_rel);
+                          $new_rel_item->set('source', $okhub_source);
+                          if (!$referred_item->relatedItemExists($new_rel_item)) {
+                            $rel_items[] = $new_rel_item;
+                            $new_rel_item->save();
+                            $referred_item->add('related_items', $new_rel_item);
+                          }
+                        }
+                        if (!empty($rel_items)) {
+                          $save_referred_item = TRUE;
+                        }
                       }
                     }
                   }
                 }
+                if ($save_referred_item) {
+                  $referred_item->addChanges($source, $serialized_referred_item);
+                  $referred_item->saveSubitems();
+                  $referred_item->saveRelatedItems();
+                  $referred_item->saveItem();
+                  $referred_item->createInverseRelatedItems();
+                }
+                // Add the new related item to the item being imported.
                 $related_item = new IdsKsRelatedItem();
                 $related_item->set('source', $source);
                 $related_item->set('relationship', $mapping->get('relationship'));

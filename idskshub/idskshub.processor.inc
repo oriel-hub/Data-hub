@@ -150,7 +150,7 @@ class IdsKsProcessor {
           $item = $new_item;
           $display = 'imported';
         }
-        else { //If it exists, we update the values for the source or create for new source and link.
+        else { //If it exists, we add/update the values for the source or create for new source and link.
           if ($update_existing) { // Update existing item.
             if (count($items_ids) > 1) {
               //IdsKsItem::mergeMultipleItemsById($items_ids);
@@ -174,62 +174,48 @@ class IdsKsProcessor {
           }
           else { // Create new item and add "same as" links to existing items.
             $item = $new_item;
-            $display = 'imported and linked to existing items';
+            $display = 'imported';
             // Get "same as" relationship based on the item's type.
             $same_as_rel = new IdsKsRelationship;
-            $same_as_rel->set('code', IDSKS_DEFAULT_MAPPING_RELATIONSHIP);
-            $same_as_rel->load();
             //----- Leaving this temporarily for backward compatibility, until the relationships are updated in the live server ---------------
-            if ($same_as_rel->getId()) {
-              $inverse_rel_code = $same_as_rel->get('inverse');
-            }
-            elseif ($item->get('type')->get('name')) {
+            if (!defined('IDSKS_DEFAULT_MAPPING_REL_CATEGORY')) {
               $rel_code = 'same_as_' . strtolower($item->get('type')->get('name'));
-              $same_as_rel->set('code', $rel_code);
-              $same_as_rel->load();
-              $inverse_rel_code = $rel_code;
             }
             //---------------------------------------------------------------------------------------------------------------------------------
-            if ($same_as_rel->getId()) {
-              foreach ($items_ids as $item_id) {
-                $rel_item = new IdsKsItem;
-                $rel_item->load($item_id);
-                $related_items[] = $rel_item;
-                $new_rel_item = new IdsKsRelatedItem;
-                $new_rel_item->set('referred_item', $rel_item);
-                $new_rel_item->set('relationship', $same_as_rel);
-                $new_rel_item->set('source', $okhub_source);
-                $new_rel_item->save();
-                $item->add('related_items', $new_rel_item);
+            else {
+              if ($item->get('type')->get('is_category')) {
+                $rel_code = IDSKS_DEFAULT_MAPPING_REL_CATEGORY;
+              }
+              else {
+                $rel_code = IDSKS_DEFAULT_MAPPING_REL_ASSET;
+              }
+            }
+            $rels_ids = IdsKsRelationship::getIds(array('code' => $rel_code, 'item_type' => $item->get('type')->getId()));
+            if ($rels_ids) {
+              // rel. code and item type should be a key, so there should be only one.
+              $same_as_rel->load($rels_ids[0]);
+              if ($same_as_rel->isSaved()) {
+                foreach ($items_ids as $item_id) {
+                  $rel_item = new IdsKsItem;
+                  $rel_item->load($item_id);
+                  $new_rel_item = new IdsKsRelatedItem;
+                  $new_rel_item->set('referred_item', $rel_item);
+                  $new_rel_item->set('relationship', $same_as_rel);
+                  $new_rel_item->set('source', $okhub_source);
+                  $new_rel_item->save();
+                  $item->add('related_items', $new_rel_item);
+                }
               }
             }
           }
         }
-        $item->saveSubitems();
-        $item->saveRelatedItems();
         $item->addChanges($source, $serialized_item, $hash);
         $item->addSemanticData($semantic);
+        $item->saveSubitems();
+        $item->saveRelatedItems();
         $item->saveItem();
+        $item->createInverseRelatedItems();
         $item_id = $item->getId();
-        if ($item_id && !$update_existing && !empty($related_items)) {
-          // In this case there are items and we have to create "same as" links from them.
-          if ($inverse_rel_code) {
-            $inverse_rel = new IdsKsRelationship;
-            $inverse_rel->set('code', $inverse_rel_code);
-            $inverse_rel->load();
-            if ($inverse_rel->getId()) {
-              foreach ($related_items as $rel_item) {
-                $new_rel_item = new IdsKsRelatedItem;
-                $new_rel_item->set('referred_item', $item);
-                $new_rel_item->set('relationship', $inverse_rel);
-                $new_rel_item->set('source', $okhub_source);
-                $new_rel_item->save();
-                $rel_item->add('related_items', $new_rel_item);
-                $rel_item->save();
-              }
-            }
-          }
-        }
       }
     }
     if ($item_id) {

@@ -202,6 +202,25 @@ class IdsKsVersionsLiteral extends IdsKsObject {
     }
   }
 
+  public function deleteLiteralsBySourceId($source_id) {
+    $new_literals = array();
+    $delete_literals_ids = array();
+    if (is_array($this->get('literals'))) {
+      foreach ($this->get('literals') as $literal) {
+        if (isset($literal)) {
+          if ($literal->get('source') && $literal->get('source')->getId() <> $source_id) {
+            $new_literals[] = $literal;
+          }
+          else {
+            $delete_literals_ids[] = $literal->getId();
+          }
+        }
+      }
+      $this->set('literals', $new_literals);
+      IdsKsLiteral::deleteMultiple($delete_literals_ids);
+    }
+  }
+
   // Add a new literal version.
   public function addLiteralXML($xml_value, $source, $original_path = '', $attributes = array()) {
     $value = (string) $xml_value;
