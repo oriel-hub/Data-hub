@@ -460,11 +460,16 @@ class IdsKsObject {
   public static function getIds($filters = array()) {
     $ids = array();
     $type = self::getEntityType();
+    $bundle = self::getBundleType();
+    $type_info = entity_get_info($type);
+    $base_table = $type_info['base table'];
     $query = new EntityFieldQuery();
-    $query->entityCondition('entity_type', $type, '=');
+    $query
+		->entityCondition('entity_type', $type)
+		->entityCondition('bundle', $bundle);
     $filters_exist = TRUE;
     foreach ($filters as $field => $value) {
-      if (is_null($value) || is_array($value) && empty($value)) {
+      if (is_null($value) || (is_array($value) && empty($value))) {
         $filters_exist = FALSE;
         break;
       }
@@ -496,7 +501,13 @@ class IdsKsObject {
     if ($filters_exist) {
       $results = $query->execute();
       if (isset($results[$type])) {
-        $ids = array_unique(array_keys($results[$type]));
+        if ($ids = array_unique(array_keys($results[$type]))) {
+          // Added to filter non-existing entities (deleted from the base table but not the field tables due to some error in the process).
+          $query_filter = db_select($base_table, 'bt')
+            ->fields('bt', array('id'))
+            ->condition('bt.id', $ids, 'IN');
+            $ids = $query_filter->execute()->fetchCol();
+        }
       }
     }
     return $ids;

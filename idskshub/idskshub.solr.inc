@@ -58,6 +58,7 @@ function idskshub_search_api_solr_documents_alter(array &$documents, SearchApiIn
   $fields_translatable = idskshub_get_solr_translatable();
   $fields_types = idskshub_solr_fields_types(); // TODO: Change to use idskshub_solr_schema_definitions().
   $index_related_items_fields = idskshub_index_related_items_fields();
+  $index_related_items_fields_unstructured = idskshub_index_related_items_unstructured_fields();
   $hub_fields_definitions = idskshub_get_solr_hub_fields_definitions();
   $required_fields = idskshub_get_solr_hub_required_fields();
   $hub_solr_schema = idskshub_get('hub_solr_schema', array('types'=>array(), 'single'=>array()));
@@ -222,6 +223,9 @@ function idskshub_search_api_solr_documents_alter(array &$documents, SearchApiIn
         $item->load($item_id['value']);
         //if ($count == 1) { watchdog(WATCHDOG_NOTICE, print_r(get_class($item),true)); $count++; }
         if ($item->isSaved() && !$item->isEmptyItem() && (!IDSKS_EXCLUDE_EXTERNAL_FROM_INDEX || !$item->isExternal())) { // Excluding items from external sources is set in settings.
+          // Update values from external sources, if any.
+          $item->updateExternalValues();
+
           // Generate fields based on item_id. It is already indexed, so there's no need to call setField.
           $fields_source['item_id'][IDSKS_HUB_SOURCE_CODE] = array($item_id['value']);
           $fields_language['item_id'][IDSKS_NOT_APPLICABLE_LANGUAGE] = array($item_id['value']); 
@@ -447,14 +451,8 @@ function idskshub_search_api_solr_documents_alter(array &$documents, SearchApiIn
                       // Add related item's title to source-specific fields.
                       $title_field_name = $prefix . '_' . $title_field['type'] . '_' . $related_item_source_code . '_' . $title_field['language'];
                       idskshub_add_solr_not_duplicated($document, $title_field_name, $title_field['value'], $hub_solr_schema);
-                      // Add item's title to hub-generated combined fields (search and facet).
-                      /* Uncomment to use these values to generate hub fields defined in idskshub.solrfields.inc (not being used now, as the search and facet fields are generated here, below).
-                      $fields_source[$title_field['type']][$related_item_source_code][] = $title_field['value'];
-                      $fields_language[$title_field['type']][$title_field['language']][] = $title_field['value'];
-                      idskshub_solr_add_hub_fields($title_field['type'], $document, $fields_language, $fields_source, $fields_translatable, $hub_fields_definitions, $hub_fields_values, $hub_solr_schema);
-                      */
-                      /* Add title search and facet fields.
-                        Alternatively, these could be defined in idskshub.solrfields.inc. In this case, the lines above should be uncommented.
+                      /* Add item's title to combined fields (search and facet fields).
+                        Alternatively, these could be defined in idskshub.solrfields.inc.
                         But we would need to add field definitions for each item type / language combination.
                         And this would need to be done each time a new item type is added.
                         For instance (in idskshub_get_solr_hub_fields_definitions()):
@@ -471,9 +469,9 @@ function idskshub_search_api_solr_documents_alter(array &$documents, SearchApiIn
                       if (!isset($title_search_field_values[$title_search_field_name]) || !in_array($title_field['value'], $title_search_field_values[$title_search_field_name])) {
                         $title_search_field_values[$title_search_field_name][] = $title_field['value'];
                         idskshub_add_solr_not_duplicated($document, $title_search_field_name, $title_field['value'], $hub_solr_schema);
-                        $hub_fields_values[$title_field['type']][] = $title_field['value']; // Keep track of these other hub-generated fields.
                       }
                       // Add title to combined search field by all languages.
+                      // !!!! This is the one being used to filter API responses in queries with theme=..., country=..., region=..., document_type=... !!!!
                       $title_search_field_name_multilingual = IDSKS_HUB_SOURCE_CODE . '_' . $title_field['type'] .'_search_hub_' . IDSKS_UNDEFINED_LANGUAGE_INDEX;
                       if (!isset($title_search_field_values[$title_search_field_name_multilingual]) || !in_array($title_field['value'], $title_search_field_values[$title_search_field_name_multilingual])) {
                         $title_search_field_values[$title_search_field_name_multilingual][] = $title_field['value'];
@@ -485,6 +483,14 @@ function idskshub_search_api_solr_documents_alter(array &$documents, SearchApiIn
                         $title_search_field_values[$title_facet_field_name][] = $title_field['value'];
                         idskshub_add_solr_not_duplicated($document, $title_facet_field_name, $title_field['value'], $hub_solr_schema);
                       }
+                      // Keep track of these other hub-generated fields.
+                      $hub_fields_values[$title_field['type']][] = $title_field['value'];
+                      // Keep track of the fields values for future use.
+                      $fields_source[$title_field['type']][$related_item_source_code][] = $title_field['value'];
+                      $fields_language[$title_field['type']][$title_field['language']][] = $title_field['value'];
+                      // Calling to 'idskshub_solr_add_hub_fields' in order to allow the use the generated values in idskshub.solrfields.inc.
+                      // (Used now to copy the generated combined fields into 'content').
+                      idskshub_solr_add_hub_fields($title_field['type'], $document, $fields_language, $fields_source, $fields_translatable, $hub_fields_definitions, $hub_fields_values, $hub_solr_schema);
                     }
                     /*------------ End related items' titles -----------*/
   
@@ -496,12 +502,6 @@ function idskshub_search_api_solr_documents_alter(array &$documents, SearchApiIn
                       // Add the Hub one here? $id_field_name = $prefix . '_' . $title_field['type'] . '_item_id_' . IDSKS_HUB_SOURCE_CODE . '_' . IDSKS_NOT_APPLICABLE_LANGUAGE;
                       idskshub_add_solr_not_duplicated($document, $id_field_name, $referred_item_id, $hub_solr_schema);
                       */
-                      // Add related item's id to combined (search and facet) fields.
-                      /* Uncomment to use these values to generate hub fields defined in idskshub.solrfields.inc (not being used now, as the search and facet fields are generated here, below).
-                      $fields_source[$title_field['type'] . '_item_id'][$related_item_source_code][] = $referred_item_id;
-                      $fields_language[$title_field['type'] . '_item_id'][IDSKS_NOT_APPLICABLE_LANGUAGE][] = $referred_item_id;
-                      idskshub_solr_add_hub_fields($title_field['type'] . '_item_id', $document, $fields_language, $fields_source, $fields_translatable, $hub_fields_definitions, $hub_fields_values, $hub_solr_schema);
-                      */
                       /* Generating search and facet fields with the related item's ids */
                       // Ids search field.
                       $id_search_field_name = IDSKS_HUB_SOURCE_CODE . '_' . $title_field['type'] .'_item_id_search_hub_' . IDSKS_NOT_APPLICABLE_LANGUAGE;
@@ -509,26 +509,55 @@ function idskshub_search_api_solr_documents_alter(array &$documents, SearchApiIn
                       // Ids facet field.
                       $id_facet_field_name = IDSKS_HUB_SOURCE_CODE . '_' . $title_field['type'] .'_item_id_facet_hub_' . IDSKS_NOT_APPLICABLE_LANGUAGE;
                       idskshub_add_solr_not_duplicated($document, $id_facet_field_name, $referred_item_id, $hub_solr_schema);
-    
                       // Add related item's id to combined field (for instance: 'hub_theme_item_id_hub_zz')
                       $id_hub_field_name = IDSKS_HUB_SOURCE_CODE . '_' . $title_field['type'] .'_item_id_hub_' . IDSKS_NOT_APPLICABLE_LANGUAGE;
                       idskshub_add_solr_not_duplicated($document, $id_hub_field_name, $referred_item_id, $hub_solr_schema);
-                      $hub_fields_values[IDSKS_HUB_SOURCE_CODE . '_' . $title_field['type'] . '_item_id'][] = $referred_item_id; // Keep track of these other hub-generated fields.
+                      // Keep track of these other hub-generated fields.    
+                      $hub_fields_values[IDSKS_HUB_SOURCE_CODE . '_' . $title_field['type'] . '_item_id'][] = $referred_item_id;
+                      // Keep track of the fields values for future use.
+                      $fields_source[$title_field['type'] . '_item_id'][$related_item_source_code][] = $referred_item_id;
+                      $fields_language[$title_field['type'] . '_item_id'][IDSKS_NOT_APPLICABLE_LANGUAGE][] = $referred_item_id;
+                      // Calling to 'idskshub_solr_add_hub_fields' in order to allow the use of the generated values in idskshub.solrfields.inc.
+                      // Not being used now.
+                      idskshub_solr_add_hub_fields($title_field['type'] . '_item_id', $document, $fields_language, $fields_source, $fields_translatable, $hub_fields_definitions, $hub_fields_values, $hub_solr_schema);
                     }
                     /*------------- End related items' ids -------------*/
   
-                    /*------ Generate related_items' fields values as XML  ------*/
+                    /*------ Add related_items' fields values ------*/
                     $ref_item_rel_items = $related_item->get('referred_item')->getRelItemsIds();
                     if ($related_item->get('source')->get('code') == IDSKS_OKHUB_SOURCE_CODE) {
-                      $related_item_source_code = IDSKS_OKHUB_SOURCE_CODE;
+                      $related_item_source_code = IDSKS_OKHUB_SOURCE_CODE; // TODO: Distinguish between related item source and relationship source!
                     }
                     //$external_mappings_source = IdsKsExternalMappings::getIds(array('source_origin'=>array_keys($available_sources)));
                     if (in_array($related_item_source_code, $available_sources) || $related_item_source_code == IDSKS_OKHUB_SOURCE_CODE) { // Now we are only adding the related item's fields for the sources present in the item.
                       foreach (array('all_sources', $related_item_source_code) as $index_related_item_source_code) {
+                        /*--------------- Add unstructured related items fields -------------------*/
+                        if (isset($index_related_items_fields_unstructured[$index_related_item_source_code][$item_type][$related_item->get('relationship')->get('code')])) {
+                          $related_item_unstructured_fields = $index_related_items_fields_unstructured[$index_related_item_source_code][$item_type][$related_item->get('relationship')->get('code')];
+                          foreach ($related_item_unstructured_fields as $unstructured_field_name => $related_item_hub_field_names) {
+                            $indexed_field_name = $unstructured_field_name . '_' . $related_item_source_code . '_' . IDSKS_NOT_APPLICABLE_LANGUAGE; // TODO: Generalize.
+                            foreach ($related_item_hub_field_names as $related_item_hub_field_name) {
+                              if ($related_item_hub_field_values = explode(',', idskshub_get_values($referred_item_id, $related_item_hub_field_name, $related_item_source_code))) {
+                                foreach ($related_item_hub_field_values as $related_item_hub_field_value) {
+                                  $fields_source[$unstructured_field_name][$related_item_source_code][] = $related_item_hub_field_value;
+                                  $fields_language[$unstructured_field_name][IDSKS_NOT_APPLICABLE_LANGUAGE][] = $related_item_hub_field_value;
+                                  idskshub_add_solr_not_duplicated($document, $indexed_field_name, $related_item_hub_field_value, $hub_solr_schema);                            
+                                }
+                              }
+                            }
+                            idskshub_solr_add_hub_fields($unstructured_field_name, $document, $fields_language, $fields_source, $fields_translatable, $hub_fields_definitions, $hub_fields_values, $hub_solr_schema);
+                          }
+                        }
+                        /*--------------- Generate structured (XML) related items fields -------------------*/
                         if (isset($index_related_items_fields[$index_related_item_source_code][$item_type][$related_item->get('relationship')->get('code')])) {
                           $related_item_xml = '';
                           $related_items_xml_definition = $index_related_items_fields[$index_related_item_source_code][$item_type][$related_item->get('relationship')->get('code')];
                           $related_item_values = $related_item->get('referred_item')->getValuesBySource();
+                          $referred_item_source = new IdsKsSource;
+                          if ($referred_item_source_code = end(array_keys($related_item_values))) { // We get the latest source for which there are values. At some point it might be decided to index values from all sources. In general there will be only one.
+                            $referred_item_source->set('code', $referred_item_source_code);
+                            $referred_item_source->load();
+                          }
                           $indexed_field_name = $related_items_xml_definition['indexed_field_name'];
                           $related_item_fields = $related_items_xml_definition['related_item_fields'];
                           if ($indexed_field_name && $related_item_fields) {
@@ -556,7 +585,7 @@ function idskshub_search_api_solr_documents_alter(array &$documents, SearchApiIn
                               foreach ($related_item_field_paths as $related_item_field_path) {
                                 $related_item_field_value = '';
                                 if (preg_match('/%(\w+)%/', $related_item_field_path, $matches)) {
-                                  $related_item_field_value = idskshub_get_meta_field($related_item->get('referred_item'), $matches[1], $related_item->get('source'));
+                                  $related_item_field_value = idskshub_get_meta_field($related_item->get('referred_item'), $matches[1], $referred_item_source);
                                   if ($related_item_field_value === '') { // Not found. See if it's a relationship code.
                                     $related_item_field_value = idskshub_get_related_item_relationship($related_item, $matches[1], $ref_item_rel_items);
                                   }
@@ -1077,7 +1106,7 @@ function idskshub_get_related_item_relationship($rel_item, $rel_code, $ref_item_
   return $value;
 }
 
-function idskshub_get_meta_field($item, $meta_field, $source_item=NULL) {
+function idskshub_get_meta_field($item, $meta_field, $source_item) {
   $value = '';
   switch ($meta_field) {
     case 'item_id':
@@ -1089,21 +1118,17 @@ function idskshub_get_meta_field($item, $meta_field, $source_item=NULL) {
       }
       break;
     case 'language':
-      if ($source_item && $language = $item->getGlobalLanguage($source_item)) {
+      if ($source_item->getId() && $language = $item->getGlobalLanguage($source_item)) {
         $value = $language;
       }
       break;
     case 'source':
-      if ($source_item) {
-        $source = $source_item->get('code');
+      if ($source_item->getId()) {
+        $value = preg_replace('/_/', '', $source_item->get('code'));
       }
-      else {
-        $source = $item->getLatestSourceCode();
-      }
-      $value = preg_replace('/_/', '', $source);
       break;
     case 'top_level':
-      if ($source_item) {
+      if ($source_item->getId()) {
         if ($source_item->get('code') == IDSKS_OKHUB_SOURCE_CODE) {
           $value = ($item->isTopLevel()) ? 'true' : 'false'; // Have no parents for any source.
         }

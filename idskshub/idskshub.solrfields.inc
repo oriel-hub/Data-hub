@@ -39,7 +39,7 @@ function idskshub_index_related_items_fields() {
                                     '%item_type%' => 'item_type',
                                     'title|name|object_name|%short_display_title%' => 'title', // Use the value of the first literal's found.
                                     '%language%' => 'language',
-                                    '%source%' => 'source',
+                                    '%source%' => 'source', // Most recent source.
                                     '%exactMatch%' => 'sameas', // The relationship is identified by the relationship code.
                                     '%broader%' => 'broader',
                                     '%narrower%' => 'narrower',
@@ -216,7 +216,7 @@ function idskshub_index_related_items_fields() {
                                     'metadata_url' => 'metadata_url',
                                   ),
         ),
-        'country_focus' => array(
+        'focusCountry' => array(
           'indexed_field_name' => 'country_focus_array',
           'external_wrappers' => array('countryList'),
           'related_item_wrappers' => array('Country'),
@@ -272,7 +272,7 @@ function idskshub_index_related_items_fields() {
                                     'name|title|object_name' => 'object_name',
                                   ),
         ),
-        'country_focus' => array(
+        'focusCountry' => array(
           'indexed_field_name' => 'country_focus_array',
           'external_wrappers' => array('countryList'),
           'related_item_wrappers' => array('Country'),
@@ -289,6 +289,25 @@ function idskshub_index_related_items_fields() {
     ),
   );
   return $index_related_items_as_xml;
+}
+
+// TODO: Generalize. This is now used to add the related countries' iso codes to documents.
+// Item ids and titles are included by default for all related items (hub_* search and facet fields). It's not necessary to add them here.
+function idskshub_index_related_items_unstructured_fields() {
+  $index_related_items_fields = array(
+    'all_sources' => array(
+      'Document' => array(
+        'focusCountry' => array( // The array key is the field name to be added to the index (minus the source and language codes).
+          'country_code' => array(  // Fields to add directly to the parent item's entry in the index.
+                              'iso_two_letter_code',
+                              'iso_three_letter_code',
+                              'object_id',
+                            ),
+        ),
+      ),
+    ),
+  );
+  return $index_related_items_fields;
 }
 
 // TODO: Implement admin interface to manage these settings.
@@ -339,7 +358,7 @@ function idskshub_get_solr_hub_fields_definitions() {
         'description' => array('description_hub_zx' => array('construction' => 'single')), 
         'date_created' => array('date_created_hub_zz' => array('construction' => 'single')),
         'date_updated' => array('date_updated_hub_zz' => array('construction' => 'single')),
-        'country_focus_ids' => array('country_code_hub_zz' => array('construction' => 'combine')),
+        //'country_focus_ids' => array('country_code_hub_zz' => array('construction' => 'combine')),
         'item_type' => array(
                         'hub_item_type' => array('construction' => 'single'), // value to display to the users.
                         'object_type_hub_zz' => array('construction' => 'single'), // value being used internally by the API.
@@ -381,13 +400,9 @@ function idskshub_get_solr_hub_fields_definitions() {
           'content' => array('copy' => 'country_focus_search_hub_zx'),
         ),
         'country_code' => array(
+          'country_code_hub_zz' => array('construction' => 'combine'),
           'country_code_search_hub_zz' => array('copy' => 'country_code_hub_zz'),
           'country_code_facet_zz' => array('copy' => 'country_code_search_hub_zz'),
-        ),
-        'document_type' => array(
-          'document_type_search_hub_zx' => array('construction' => 'combine'), 
-          'document_type_facet_hub_zx' => array('copy' => 'document_type_search_hub_zx'),
-          'content' => array('copy' => 'document_type_search_hub_zx'),
         ),
         'metadata_languages' => array(
           'metadata_languages_hub_zz' => array('construction' => 'combine'),
@@ -396,6 +411,26 @@ function idskshub_get_solr_hub_fields_definitions() {
         'object_id' => array('content' => array('construction' => 'combine')),
         'contributor' => array('contributor_search_hub_en' => array('construction' => 'combine'), 'contributor_facet_hub_en' => array('copy' => 'contributor_search_hub_en')),
         'acronym' => array('acronym_search_hub_en' => array('construction' => 'combine'), 'acronym_facet_hub_en' => array('copy' => 'acronym_search_hub_en')),
+        // Note: The related items combined fields (hub_country_search_hub_zx, etc) are generated directly in idskshub.solr.inc.
+        // See comments in that file in order to generate them here if needed.
+        'country' => array(
+          'content' => array('copy' => 'hub_country_search_hub_zx'),
+        ),
+        'theme' => array(
+          'content' => array('copy' => 'hub_theme_search_hub_zx'),
+        ),
+        'region' => array(
+          'content' => array('copy' => 'hub_region_search_hub_zx'),
+        ),
+        'organisation' => array(
+          'content' => array('copy' => 'hub_organisation_search_hub_zx'),
+        ),
+        'document_type' => array(
+          'document_type_search_hub_zx' => array('construction' => 'combine'), 
+          'document_type_facet_hub_zx' => array('copy' => 'document_type_search_hub_zx'),
+          'content' => array('copy' => 'document_type_search_hub_zx'),
+          'content' => array('copy' => 'hub_document_type_search_hub_zx'),
+        ),
 /*
         'object_id' => array(
           'object_id_search_hub_zz' => array('construction' => 'combine'), 
@@ -478,7 +513,7 @@ function idskshub_get_solr_hub_fields_values_definitions() {
         'category_id_sort_hub_zz' => array('language' => 'all', 'source' => 'eldis'),
         'title_search_hub_zx' => array('language' => 'all'),
         'content' => array('language' => 'all'),
-        'country_code_hub_zz' => array('regexp' => '/^\s*\w{2}\s*$/'),
+        //'country_code_hub_zz' => array('regexp' => '/^\s*\w{2}\s*$/'),
         // Not working...'theme_item_id_hub_zz' => array('language' => 'all'), 
       ),
   );

@@ -34,28 +34,16 @@ class IdsKsVersionsLiteral extends IdsKsObject {
     return (!$this->get('literals'));
   }
 
-  // Get the literal versions objects corresponding to the literal value, path (and source, if present).
-  public static function getLiteralsVersions($path, $value, $source = NULL) {
-    $found_versions = array();
-    $lit = new IdsKsLiteral();
-    $lit->set('value', $value);
+  // Get the literal versions ids corresponding to the literal value, path (and source, if present).
+  public static function getLiteralsVersionsIds($path, $value, $source = NULL) {
+    $versions_literal_ids = array();
+    $filters_literals['value'] = $value;
     if (isset($source)) {
-      $lit->set('source', $source);
+      $filters_literals['source'] = $source->getId();
     }
-    $literals_value = $lit->getObjectsByProperties();
-    if (!empty($literals_value)) {
-      foreach ($literals_value as $literal) {
-        $versions_literal_ids = IdsKsVersionsLiteral::getIds(array('literals' => $literal->getId()));
-        foreach ($versions_literal_ids as $versions_literal_id) {
-          $versions = new IdsKsVersionsLiteral();
-          $versions->load($versions_literal_id);
-          if ($versions->get('path') && $versions->get('path') == $path) {
-            $found_versions[] = $versions;
-          }
-        }
-      }
-    }
-    return $found_versions;
+    $literals_ids = IdsKsLiteral::getIds($filters_literals);
+    $versions_literal_ids = IdsKsVersionsLiteral::getIds(array('literals' => $literals_ids, 'path' => $path));
+    return $versions_literal_ids;
   }
 
   // Add literal $new_literal to the current literal's versions. Check for existing literals of this source if they exits and should be replaced.

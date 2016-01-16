@@ -1402,27 +1402,35 @@ class IdsKsItem extends IdsKsObject {
   public static function retrieveItemIdsByKeys($path_values, $compound_keys = FALSE, $source = NULL, $type = NULL) {
     $literals = array();
     $found_items_ids = array();
+    $filters = array();
     if (isset($type)) {
       $filters['type'] = $type->getId();
     }
-    else {
-      $filters = array();
-    }
     foreach ($path_values as $path => $value) {
-      $versions = IdsKsVersionsLiteral::getLiteralsVersions($path, $value, $source);
       $items_ids_path = array();
-      foreach ($versions as $versions_literal) {
-        $filters['versions_literals'] = $versions_literal->getId(); 
-        $items_ids = IdsKsItem::getIds($filters);
-        $items_ids_path = array_merge($items_ids_path, $items_ids);
+      if ($versions_ids = IdsKsVersionsLiteral::getLiteralsVersionsIds($path, $value, $source)) {
+        $filters['versions_literals'] = $versions_ids;
+        $items_ids_path = IdsKsItem::getIds($filters);
       }
-      if (!$compound_keys) {
-        $found_items_ids = array_merge($found_items_ids, $items_ids_path);
+      if (!$compound_keys) { // Not compound key.
+        if ($items_ids_path) { // There are items for this path. We stop looking and return the found items.
+          $found_items_ids = $items_ids_path;
+          break;
+        }
       }
-      elseif (empty($found_items_ids)) {
-        $found_items_ids = $items_ids_path;
-      } else {
-        $found_items_ids = array_intersect($items_ids_path, $found_items_ids);
+      else { // Compound key
+        if ($items_ids_path) { // There are items for this path.
+          if ($found_items_ids) { // There were items found before. We keep the intersection.
+            $found_items_ids = array_intersect($items_ids_path, $found_items_ids);
+          }
+          else { // These are the first items found.
+            $found_items_ids = $items_ids_path;
+          }
+        }
+        else { // There are no items for this path. We stop looking and return empty.
+          $found_items_ids = array();
+          break;
+        }
       }
     }
     return array_unique($found_items_ids);

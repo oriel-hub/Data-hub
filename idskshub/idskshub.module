@@ -705,13 +705,15 @@ function idskshub_apply_mappings($mappings_ids) {
                 $versions_origin->load($versions_origin_id);
                 $literals_destination = array();
                 // we can't just change the path because there might be some literals that shouldn't be moved (because the attributes don't match, for instance).
-                foreach ($versions_origin->get('literals') as $literal_origin) {
-                  // If the source and path match.
-                  if ($literal_origin && $literal_origin->get('original_path') == $mapping->get('path_origin') && (!$mapping->get('source') || $mapping->get('source')->getId() == $literal_origin->get('source')->getId())) {
-                    // we check if the attributes match.
-                    $included_attrs_literal = (!$literal_origin->get('attributes') && !$mapping->get('attributes_origin') || !(array_udiff($mapping->get('attributes_origin'), $literal_origin->get('attributes'), 'idskshub_diff')));
-                    if ($included_attrs_literal) {
-                      $literals_destination[$literal_origin->getId()] = $literal_origin;
+                if ($versions_origin->get('literals')) {
+                  foreach ($versions_origin->get('literals') as $literal_origin) {
+                    // If the source and path match.
+                    if ($literal_origin && $literal_origin->get('original_path') == $mapping->get('path_origin') && (!$mapping->get('source') || $mapping->get('source')->getId() == $literal_origin->get('source')->getId())) {
+                      // we check if the attributes match.
+                      $included_attrs_literal = (!$literal_origin->get('attributes') && !$mapping->get('attributes_origin') || !(array_udiff($mapping->get('attributes_origin'), $literal_origin->get('attributes'), 'idskshub_diff')));
+                      if ($included_attrs_literal) {
+                        $literals_destination[$literal_origin->getId()] = $literal_origin;
+                      }
                     }
                   }
                 }
