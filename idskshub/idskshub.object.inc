@@ -124,7 +124,7 @@ class IdsKsObject {
         }
         elseif (is_array($value)) {
           foreach ($value as $val) {
-            if (scalar($val)) {
+            if (is_scalar($val)) {
               $filters[$property][] = $val;
             }
             elseif (is_a($val, 'IdsKsObject') && $val->getId()) {
